@@ -159,4 +159,12 @@ export class InvoicesService {
     if (!invoice) throw new NotFoundException('Invoice not found');
     return invoice;
   }
+
+  async getByNumber(tenantId: string, number: string) {
+    const invoice = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.invoice.findFirst({ where: { number }, include: INVOICE_INCLUDE }),
+    );
+    if (!invoice) throw new NotFoundException('Invoice not found');
+    return invoice;
+  }
 }

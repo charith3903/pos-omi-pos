@@ -21,6 +21,13 @@ import { SyncModule } from './sync/sync.module';
 import { TenantModule } from './tenant/tenant.module';
 import { TextileModule } from './textile/textile.module';
 import { VerticalModule } from './vertical/vertical.module';
+import { PurchasingModule } from './purchasing/purchasing.module';
+import { RefundsModule } from './refunds/refunds.module';
+import { WarrantyModule } from './warranty/warranty.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
+import { OutletsModule } from './outlets/outlets.module';
+import { LoyaltyModule } from './loyalty/loyalty.module';
+import { ShiftsModule } from './shifts/shifts.module';
 
 @Module({
   imports: [
@@ -49,6 +56,13 @@ import { VerticalModule } from './vertical/vertical.module';
     SupermarketModule,
     TextileModule,
     ReportsModule,
+    PurchasingModule,
+    RefundsModule,
+    WarrantyModule,
+    SuppliersModule,
+    OutletsModule,
+    LoyaltyModule,
+    ShiftsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

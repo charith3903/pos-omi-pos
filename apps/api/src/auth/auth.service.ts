@@ -95,7 +95,11 @@ export class AuthService {
     const valid = await argon2.verify(user.passwordHash, dto.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    return { user: this.sanitize(user), ...this.issueTokens(user) };
+    return { 
+      user: this.sanitize(user), 
+      tenant: { id: tenant.id, name: tenant.name, subdomain: tenant.subdomain, businessType: tenant.businessType },
+      ...this.issueTokens(user) 
+    };
   }
 
   // ─── Refresh ──────────────────────────────────────────────────────────────

@@ -37,6 +37,12 @@ export class StockController {
     return this.svc.getAllStock(u.tenantId);
   }
 
+  /** GET /stock/list — stock with product names for management UI. */
+  @Get('list')
+  getList(@CurrentUser() u: RequestUser) {
+    return this.svc.getStockList(u.tenantId);
+  }
+
   /** GET /stock/:productId — stock for one product (Redis-cached). */
   @Get(':productId')
   getOne(@CurrentUser() u: RequestUser, @Param('productId') productId: string) {

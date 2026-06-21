@@ -4,8 +4,8 @@ import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import KpiCard from '@/components/KpiCard';
 import OutletSwitcher from '@/components/OutletSwitcher';
-import { useI18n, fmtCurrency, fmtDate } from '@/lib/i18n';
-import { reportApi, thisWeekRange, isoDate, type KpiToday, type SalesDayRow, type TopProductRow } from '@/lib/reports';
+import { useI18n, fmtDate } from '@/lib/i18n';
+import { reportApi, thisWeekRange, type KpiToday, type SalesDayRow, type TopProductRow } from '@/lib/reports';
 
 // Load charts client-side only (recharts uses browser APIs)
 const SalesChart      = dynamic(() => import('@/components/SalesChart'),      { ssr: false });

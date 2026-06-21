@@ -30,6 +30,11 @@ export class InvoicesController {
     return this.svc.list(u.tenantId, page ? +page : 1, limit ? +limit : 20);
   }
 
+  @Get('by-number/:number')
+  getByNumber(@CurrentUser() u: RequestUser, @Param('number') number: string) {
+    return this.svc.getByNumber(u.tenantId, number);
+  }
+
   @Get(':id')
   getById(@CurrentUser() u: RequestUser, @Param('id') id: string) {
     return this.svc.getById(u.tenantId, id);

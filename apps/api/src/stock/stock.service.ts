@@ -74,6 +74,26 @@ export class StockService {
     return map;
   }
 
+  /** Stock list with product names for the management UI. */
+  async getStockList(tenantId: string): Promise<{ productId: string; productName: string; sku: string | null; qty: number }[]> {
+    const stockMap = await this.getAllStock(tenantId);
+    if (!Object.keys(stockMap).length) return [];
+
+    const products = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.product.findMany({
+        where: { id: { in: Object.keys(stockMap) }, trackStock: true },
+        select: { id: true, name: true, sku: true },
+      }),
+    );
+
+    return products.map((p) => ({
+      productId: p.id,
+      productName: p.name,
+      sku: p.sku,
+      qty: stockMap[p.id] ?? 0,
+    })).sort((a, b) => a.productName.localeCompare(b.productName));
+  }
+
   /** Record a manual stock adjustment (positive = receive, negative = write-off). */
   async adjust(
     tenantId: string,

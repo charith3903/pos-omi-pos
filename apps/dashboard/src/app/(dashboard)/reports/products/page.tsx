@@ -30,8 +30,7 @@ export default function ProductReportPage() {
       .finally(() => setLoading(false));
   }, [range, metric]);
 
-  const metricValue = (r: TopProductRow) =>
-    metric === 'qty' ? fmtNum(r.qtySold, 1) : fmtCurrency(metric === 'profit' ? r.profit : r.revenue);
+
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6 print:p-2">

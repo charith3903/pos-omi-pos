@@ -53,6 +53,7 @@ enum InvoiceStatus {
   PAID
   VOID
   REFUNDED
+  PARTIAL_REFUND
 }
 
 enum SyncStatus {
@@ -95,13 +96,23 @@ model Tenant {
   payments              Payment[]
   invoiceCounter        InvoiceCounter?
   restaurantTables      RestaurantTable[]
+  restaurantOrders      RestaurantOrder[]
+  splitBills            SplitBill[]
   kots                  Kot[]
+  loyaltyAccounts       LoyaltyAccount[]
+  loyaltyTransactions   LoyaltyTransaction[]
+  shifts                Shift[]
   imeiRecords           ImeiRecord[]
   repairJobs            RepairJob[]
   rentalAgreements      RentalAgreement[]
   promotions            Promotion[]
   dailySalesSummaries   DailySalesSummary[]
   productSalesSummaries ProductSalesSummary[]
+  purchaseOrders        PurchaseOrder[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  goodsReceivedNotes    GoodsReceivedNote[]
+  goodsReceivedNoteItems GoodsReceivedNoteItem[]
+  warrantyClaims        WarrantyClaim[]
 
   @@map("tenants")
 }
@@ -199,6 +210,9 @@ model Product {
   stockMovements        StockMovement[]
   invoiceItems          InvoiceItem[]
   productSalesSummaries ProductSalesSummary[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  goodsReceivedNoteItems GoodsReceivedNoteItem[]
+  warrantyClaims        WarrantyClaim[]
 
   @@unique([tenantId, sku])
   @@index([tenantId, barcode], name: "idx_products_tenant_barcode")
@@ -262,8 +276,9 @@ model Customer {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  invoices Invoice[]
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
+  loyaltyAccount LoyaltyAccount?
 
   @@map("customers")
 }
@@ -280,6 +295,7 @@ model Supplier {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
 
   @@map("suppliers")
 }
@@ -310,6 +326,7 @@ model Invoice {
   customer Customer?     @relation(fields: [customerId], references: [id])
   items    InvoiceItem[]
   payments Payment[]
+  warrantyClaims WarrantyClaim[]
 
   @@index([tenantId, createdAt], name: "idx_invoices_tenant_created")
   @@map("invoices")
@@ -439,8 +456,9 @@ model RestaurantTable {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   kots   Kot[]
+  orders RestaurantOrder[]
 
   @@index([tenantId])
   @@map("restaurant_tables")
@@ -451,19 +469,133 @@ model RestaurantTable {
 model Kot {
   id        String   @id @default(cuid())
   tenantId  String   @map("tenant_id")
+  orderId   String?  @map("order_id")
   tableId   String?  @map("table_id")
   invoiceId String?  @map("invoice_id") @db.Uuid
   orderType String   @default("DINE_IN") @map("order_type")
-  items     Json     // [{productId, name, qty, modifiers: string[]}]
-  status    String   @default("PENDING") // PENDING | SENT | DONE | CANCELLED
+  items     Json     // [{productId, name, portion, portionPrice, qty, notes, modifiers, isComplementary}]
+  portion   String?
+  kotNotes  String?  @map("kot_notes")
+  status    String   @default("PENDING") // PENDING | COOKING | READY | DELIVERED | CANCELLED
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  table  RestaurantTable? @relation(fields: [tableId], references: [id])
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  table  RestaurantTable?  @relation(fields: [tableId], references: [id])
+  order  RestaurantOrder?  @relation(fields: [orderId], references: [id])
 
   @@index([tenantId, status])
+  @@index([orderId])
   @@map("kots")
+}
+
+// Restaurant Orders — groups multiple KOTs for a single table session
+// RLS enabled
+model RestaurantOrder {
+  id                String    @id @default(cuid())
+  tenantId          String    @map("tenant_id")
+  tableId           String?   @map("table_id")
+  orderNumber       String    @map("order_number")
+  status            String    @default("OPEN")    // OPEN | BILLED | PAID | VOID
+  orderType         String    @default("DINE_IN") @map("order_type")
+  guestCount        Int       @default(1)         @map("guest_count")
+  waiterId          String?   @map("waiter_id")
+  customerId        String?   @map("customer_id")
+  isComplementary   Boolean   @default(false)     @map("is_complementary")
+  complementaryNote String?   @map("complementary_note")
+  notes             String?
+  discount          Decimal   @default(0) @db.Decimal(12, 2)
+  openedAt          DateTime  @default(now()) @map("opened_at")
+  closedAt          DateTime? @map("closed_at")
+  invoiceId         String?   @map("invoice_id") @db.Uuid
+
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  table      RestaurantTable? @relation(fields: [tableId], references: [id])
+  kots       Kot[]
+  splitBills SplitBill[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, tableId])
+  @@map("restaurant_orders")
+}
+
+// Bill split record — one row per split part
+// RLS enabled
+model SplitBill {
+  id       String  @id @default(cuid())
+  tenantId String  @map("tenant_id")
+  orderId  String  @map("order_id")
+  label    String
+  items    Json    @default("[]")
+  total    Decimal @default(0) @db.Decimal(12, 2)
+  paid     Boolean @default(false)
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  RestaurantOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("split_bills")
+}
+
+// ─── Loyalty ─────────────────────────────────────────────────────────────────
+
+// RLS enabled
+model LoyaltyAccount {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  customerId     String   @unique @map("customer_id")
+  points         Int      @default(0)
+  lifetimePoints Int      @default(0) @map("lifetime_points")
+  tier           String   @default("BRONZE") // BRONZE | SILVER | GOLD | PLATINUM
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer           @relation(fields: [customerId], references: [id])
+  transactions LoyaltyTransaction[]
+
+  @@index([tenantId])
+  @@map("loyalty_accounts")
+}
+
+// RLS enabled
+model LoyaltyTransaction {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  accountId   String   @map("account_id")
+  type        String   // EARN | REDEEM | ADJUST | EXPIRE
+  points      Int
+  referenceId String?  @map("reference_id")
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account LoyaltyAccount @relation(fields: [accountId], references: [id])
+
+  @@index([accountId])
+  @@map("loyalty_transactions")
+}
+
+// ─── Shifts ──────────────────────────────────────────────────────────────────
+
+// RLS enabled
+model Shift {
+  id          String    @id @default(cuid())
+  tenantId    String    @map("tenant_id")
+  outletId    String?   @map("outlet_id")
+  status      String    @default("OPEN") // OPEN | CLOSED
+  openedAt    DateTime  @default(now()) @map("opened_at")
+  closedAt    DateTime? @map("closed_at")
+  openedBy    String?   @map("opened_by")
+  closedBy    String?   @map("closed_by")
+  openingCash Decimal   @default(0) @map("opening_cash") @db.Decimal(12, 2)
+  closingCash Decimal?  @map("closing_cash") @db.Decimal(12, 2)
+  notes       String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("shifts")
 }
 
 // ─── Mobile ──────────────────────────────────────────────────────────────────
@@ -562,4 +694,123 @@ model Promotion {
 
   @@index([tenantId, isActive])
   @@map("promotions")
+}
+
+// ─── Purchasing & Receiving ──────────────────────────────────────────────────
+
+enum POStatus {
+  DRAFT
+  SENT
+  PARTIAL
+  COMPLETED
+  CANCELLED
+}
+
+enum GRNStatus {
+  DRAFT
+  COMPLETED
+}
+
+// RLS enabled
+model PurchaseOrder {
+  id         String     @id @default(cuid())
+  tenantId   String     @map("tenant_id")
+  supplierId String     @map("supplier_id")
+  number     String     // e.g. PO-2024-001
+  status     POStatus   @default(DRAFT)
+  total      Decimal    @default(0) @db.Decimal(12, 2)
+  notes      String?
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+
+  tenant   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  items    PurchaseOrderItem[]
+  grns     GoodsReceivedNote[]
+
+  @@index([tenantId, status])
+  @@map("purchase_orders")
+}
+
+// RLS enabled
+model PurchaseOrderItem {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  poId      String   @map("po_id")
+  productId String   @map("product_id")
+  qty       Decimal  @db.Decimal(12, 3)
+  unitPrice Decimal  @map("unit_price") @db.Decimal(12, 2)
+  total     Decimal  @db.Decimal(12, 2)
+
+  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  po      PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  product Product       @relation(fields: [productId], references: [id])
+
+  @@map("purchase_order_items")
+}
+
+// RLS enabled
+model GoodsReceivedNote {
+  id         String    @id @default(cuid())
+  tenantId   String    @map("tenant_id")
+  poId       String?   @map("po_id")
+  number     String    // e.g. GRN-2024-001
+  status     GRNStatus @default(DRAFT)
+  notes      String?
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  po     PurchaseOrder?          @relation(fields: [poId], references: [id])
+  items  GoodsReceivedNoteItem[]
+
+  @@index([tenantId, status])
+  @@map("goods_received_notes")
+}
+
+// RLS enabled
+model GoodsReceivedNoteItem {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  grnId     String   @map("grn_id")
+  productId String   @map("product_id")
+  qty       Decimal  @db.Decimal(12, 3)
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  grn     GoodsReceivedNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  product Product           @relation(fields: [productId], references: [id])
+
+  @@map("goods_received_note_items")
+}
+
+// ─── Warranty ────────────────────────────────────────────────────────────────
+
+enum WarrantyClaimStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SENT_TO_SUPPLIER
+  REPLACED
+  REFUNDED
+}
+
+// RLS enabled
+model WarrantyClaim {
+  id        String              @id @default(cuid())
+  tenantId  String              @map("tenant_id")
+  invoiceId String?             @map("invoice_id") @db.Uuid
+  productId String              @map("product_id")
+  serial    String?
+  issue     String
+  status    WarrantyClaimStatus @default(PENDING)
+  notes     String?
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  product Product  @relation(fields: [productId], references: [id])
+
+  @@index([tenantId, status])
+  @@map("warranty_claims")
 }
