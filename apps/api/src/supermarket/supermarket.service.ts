@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApplyPromotionsDto, CartLineDto, CreatePromotionDto } from './dto/supermarket.dto';
 
-interface AppliedDiscount {
+export interface AppliedDiscount {
   promotionId: string;
   promotionName: string;
   discountAmt: number;
@@ -36,8 +36,8 @@ export class SupermarketService {
           tenantId,
           name: dto.name,
           type: dto.type,
-          conditions: dto.conditions,
-          reward: dto.reward,
+          conditions: dto.conditions as any,
+          reward: dto.reward as any,
           validFrom: new Date(dto.validFrom),
           validUntil: dto.validUntil ? new Date(dto.validUntil) : null,
         },
