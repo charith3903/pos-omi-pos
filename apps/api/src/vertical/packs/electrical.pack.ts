@@ -1,0 +1,85 @@
+import { VerticalPack } from '@omnipos/types';
+
+export const ELECTRICAL_PACK: VerticalPack = {
+  businessType: 'ELECTRICAL',
+
+  labels: {
+    product: 'Product',
+    products: 'Products',
+    sku: 'Model Code',
+    barcode: 'Barcode',
+    category: 'Category',
+    searchPlaceholder: 'Search by brand, model, serial…',
+    receiptTitle: 'SALES RECEIPT',
+    addProduct: 'Add Product',
+    noProducts: 'No products found',
+  },
+
+  productFields: [
+    {
+      key: 'brand',
+      label: 'Brand',
+      type: 'text',
+      required: true,
+      searchable: true,
+      position: 1,
+    },
+    {
+      key: 'model_number',
+      label: 'Model Number',
+      type: 'text',
+      required: true,
+      searchable: true,
+      position: 2,
+      placeholder: 'e.g. KV-29LS60',
+    },
+    {
+      key: 'voltage',
+      label: 'Voltage',
+      type: 'select',
+      required: false,
+      searchable: false,
+      position: 3,
+      options: ['110V', '220V', '240V', '110-240V'],
+    },
+    {
+      key: 'wattage',
+      label: 'Wattage',
+      type: 'number',
+      required: false,
+      searchable: false,
+      position: 4,
+    },
+    {
+      key: 'energy_rating',
+      label: 'Energy Rating',
+      type: 'select',
+      required: false,
+      searchable: false,
+      position: 5,
+      options: ['A+++', 'A++', 'A+', 'A', 'B', 'C', 'D'],
+    },
+    {
+      key: 'serial_required',
+      label: 'Serial Number Required',
+      type: 'boolean',
+      required: false,
+      searchable: false,
+      position: 6,
+    },
+    {
+      key: 'warranty_months',
+      label: 'Warranty (months)',
+      type: 'number',
+      required: false,
+      searchable: false,
+      position: 7,
+      placeholder: 'e.g. 12',
+    },
+  ],
+
+  enabledModules: ['catalog', 'invoices', 'stock', 'warranty'],
+  defaultTaxRate: 0,
+  receiptTemplate: 'standard',
+  searchFilterKeys: ['brand', 'model_number'],
+};

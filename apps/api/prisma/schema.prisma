@@ -1,0 +1,516 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Tenant & Auth Enums ─────────────────────────────────────────────────────
+
+enum BusinessType {
+  SPARE_PARTS
+  RESTAURANT
+  ELECTRICAL
+  SUPERMARKET
+  TEXTILE
+  MOBILE
+  RENTAL
+}
+
+enum TenantPlan {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  SUSPENDED
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  CASHIER
+}
+
+// ─── POS Domain Enums ────────────────────────────────────────────────────────
+
+enum StockMovementReason {
+  SALE
+  PURCHASE
+  ADJUSTMENT
+  RETURN
+  DAMAGE
+  TRANSFER
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PAID
+  VOID
+  REFUNDED
+}
+
+enum SyncStatus {
+  SYNCED
+  PENDING
+  CONFLICT
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  CHEQUE
+  CREDIT
+}
+
+// ─── Core Tenant Models (no RLS on tenants) ──────────────────────────────────
+
+model Tenant {
+  id           String       @id @default(cuid())
+  name         String
+  subdomain    String       @unique
+  businessType BusinessType @map("business_type")
+  plan         TenantPlan   @default(STARTER)
+  status       TenantStatus @default(TRIAL)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  users            User[]
+  outlets          Outlet[]
+  devices          Device[]
+  categories       Category[]
+  products         Product[]
+  productVariants  ProductVariant[]
+  stockMovements   StockMovement[]
+  customers        Customer[]
+  suppliers        Supplier[]
+  invoices         Invoice[]
+  invoiceItems     InvoiceItem[]
+  payments         Payment[]
+  invoiceCounter   InvoiceCounter?
+  restaurantTables RestaurantTable[]
+  kots             Kot[]
+  imeiRecords      ImeiRecord[]
+  repairJobs       RepairJob[]
+  rentalAgreements RentalAgreement[]
+  promotions       Promotion[]
+
+  @@map("tenants")
+}
+
+// RLS enabled
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  name         String
+  email        String
+  phone        String?
+  passwordHash String   @map("password_hash")
+  role         UserRole @default(CASHIER)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+// RLS enabled
+model Outlet {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  address   String?
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  devices  Device[]
+  invoices Invoice[]
+
+  @@map("outlets")
+}
+
+// RLS enabled
+model Device {
+  id         String    @id @default(cuid())
+  tenantId   String    @map("tenant_id")
+  outletId   String    @map("outlet_id")
+  name       String
+  lastSyncAt DateTime? @map("last_sync_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  outlet   Outlet    @relation(fields: [outletId], references: [id])
+  invoices Invoice[]
+
+  @@map("devices")
+}
+
+// ─── Catalog ─────────────────────────────────────────────────────────────────
+
+// RLS enabled
+model Category {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  parentId  String?  @map("parent_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@map("categories")
+}
+
+// RLS enabled
+model Product {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  categoryId String?  @map("category_id")
+  name       String
+  sku        String?
+  barcode    String?
+  price      Decimal  @db.Decimal(12, 2)
+  cost       Decimal? @db.Decimal(12, 2)
+  taxRate    Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4)
+  trackStock Boolean  @default(true) @map("track_stock")
+  attributes Json?    // JSONB: flexible product attributes { color, size, ... }
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category       Category?        @relation(fields: [categoryId], references: [id])
+  variants       ProductVariant[]
+  stockMovements StockMovement[]
+  invoiceItems   InvoiceItem[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, barcode], name: "idx_products_tenant_barcode")
+  @@index([tenantId, sku],     name: "idx_products_tenant_sku")
+  @@map("products")
+}
+
+// RLS enabled
+model ProductVariant {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  productId  String   @map("product_id")
+  attributes Json     // { "color": "Red", "size": "L" }
+  price      Decimal? @db.Decimal(12, 2) // null = inherit from product
+  barcode    String?
+  sku        String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product        Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockMovements StockMovement[]
+  invoiceItems   InvoiceItem[]
+
+  @@index([tenantId, barcode], name: "idx_variants_tenant_barcode")
+  @@map("product_variants")
+}
+
+// Append-only ledger — never updated or deleted.
+// current stock = SUM(qty_delta) grouped by (product_id, variant_id).
+// RLS enabled
+model StockMovement {
+  id        String              @id @default(cuid())
+  tenantId  String              @map("tenant_id")
+  productId String              @map("product_id")
+  variantId String?             @map("variant_id")
+  qtyDelta  Decimal             @map("qty_delta") @db.Decimal(12, 3)
+  reason    StockMovementReason
+  refId     String?             @map("ref_id")     // invoice_id, PO id, etc.
+  deviceId  String?             @map("device_id")
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id])
+  variant ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([tenantId, productId], name: "idx_stock_tenant_product")
+  @@map("stock_movements")
+}
+
+// ─── Customers & Suppliers ───────────────────────────────────────────────────
+
+// RLS enabled
+model Customer {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
+
+  @@map("customers")
+}
+
+// RLS enabled
+model Supplier {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("suppliers")
+}
+
+// ─── Invoices (immutable after creation) ─────────────────────────────────────
+
+// id is a client-generated UUID — enables offline idempotency.
+// RLS enabled
+model Invoice {
+  id         String        @id @db.Uuid
+  tenantId   String        @map("tenant_id")
+  outletId   String        @map("outlet_id")
+  deviceId   String?       @map("device_id")
+  number     String        // human-readable: INV-2024-000001
+  customerId String?       @map("customer_id")
+  subtotal   Decimal       @db.Decimal(12, 2)
+  discount   Decimal       @default(0) @db.Decimal(12, 2)
+  tax        Decimal       @default(0) @db.Decimal(12, 2)
+  total      Decimal       @db.Decimal(12, 2)
+  status     InvoiceStatus @default(PAID)
+  syncStatus SyncStatus    @default(SYNCED) @map("sync_status")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  outlet   Outlet        @relation(fields: [outletId], references: [id])
+  device   Device?       @relation(fields: [deviceId], references: [id])
+  customer Customer?     @relation(fields: [customerId], references: [id])
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@index([tenantId, createdAt], name: "idx_invoices_tenant_created")
+  @@map("invoices")
+}
+
+// Snapshot fields (name_snapshot) make this immutable w.r.t. product renames.
+// RLS enabled
+model InvoiceItem {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  invoiceId    String   @map("invoice_id") @db.Uuid
+  productId    String   @map("product_id")
+  variantId    String?  @map("variant_id")
+  nameSnapshot String   @map("name_snapshot")
+  qty          Decimal  @db.Decimal(12, 3)
+  unitPrice    Decimal  @map("unit_price") @db.Decimal(12, 2)
+  discount     Decimal  @default(0) @db.Decimal(12, 2)
+  tax          Decimal  @default(0) @db.Decimal(12, 2)
+  lineTotal    Decimal  @map("line_total") @db.Decimal(12, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice Invoice         @relation(fields: [invoiceId], references: [id])
+  product Product         @relation(fields: [productId], references: [id])
+  variant ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("invoice_items")
+}
+
+// RLS enabled
+model Payment {
+  id        String        @id @default(cuid())
+  tenantId  String        @map("tenant_id")
+  invoiceId String        @map("invoice_id") @db.Uuid
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(12, 2)
+  reference String?       // card auth code, bank reference, etc.
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@map("payments")
+}
+
+/// Audit log of each push/pull exchange. No RLS — inserted by service role.
+model SyncLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id")
+  deviceId  String   @map("device_id")
+  direction String   @map("direction") // PUSH | PULL
+  itemCount Int      @default(0) @map("item_count")
+  cursor    String?  @map("cursor")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@map("sync_logs")
+}
+
+// Single row per tenant; locked FOR UPDATE during invoice creation.
+// RLS enabled
+model InvoiceCounter {
+  tenantId String @id @map("tenant_id")
+  lastNum  Int    @default(0) @map("last_num")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_counters")
+}
+
+// ─── Restaurant ──────────────────────────────────────────────────────────────
+
+// RLS enabled
+model RestaurantTable {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  name      String
+  area      String?
+  capacity  Int      @default(4)
+  status    String   @default("AVAILABLE") // AVAILABLE | OCCUPIED | RESERVED
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kots   Kot[]
+
+  @@index([tenantId])
+  @@map("restaurant_tables")
+}
+
+// Kitchen Order Ticket — one per order, routes to kitchen printer/display
+// RLS enabled
+model Kot {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  tableId   String?  @map("table_id")
+  invoiceId String?  @map("invoice_id") @db.Uuid
+  orderType String   @default("DINE_IN") @map("order_type")
+  items     Json     // [{productId, name, qty, modifiers: string[]}]
+  status    String   @default("PENDING") // PENDING | SENT | DONE | CANCELLED
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  table  RestaurantTable? @relation(fields: [tableId], references: [id])
+
+  @@index([tenantId, status])
+  @@map("kots")
+}
+
+// ─── Mobile ──────────────────────────────────────────────────────────────────
+
+// IMEI / serial captured at point of sale for traceability
+// RLS enabled
+model ImeiRecord {
+  id              String    @id @default(cuid())
+  tenantId        String    @map("tenant_id")
+  invoiceId       String?   @map("invoice_id") @db.Uuid
+  productId       String    @map("product_id")
+  imei            String
+  serial          String?
+  warrantyMonths  Int       @default(12) @map("warranty_months")
+  warrantyExpires DateTime? @map("warranty_expires")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, imei])
+  @@map("imei_records")
+}
+
+// Repair job sheet
+// RLS enabled
+model RepairJob {
+  id              String    @id @default(cuid())
+  tenantId        String    @map("tenant_id")
+  customerId      String?   @map("customer_id")
+  deviceMake      String    @map("device_make")
+  deviceModel     String    @map("device_model")
+  imei            String?
+  issue           String
+  status          String    @default("RECEIVED") // RECEIVED | DIAGNOSING | REPAIRING | READY | DELIVERED
+  technicianNotes String?   @map("technician_notes")
+  estimatedCost   Decimal?  @map("estimated_cost") @db.Decimal(12, 2)
+  actualCost      Decimal?  @map("actual_cost") @db.Decimal(12, 2)
+  receivedAt      DateTime  @default(now()) @map("received_at")
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("repair_jobs")
+}
+
+// ─── Rental ──────────────────────────────────────────────────────────────────
+
+// One record per rental event — open until returned
+// RLS enabled
+model RentalAgreement {
+  id           String    @id @default(cuid())
+  tenantId     String    @map("tenant_id")
+  invoiceId    String?   @map("invoice_id") @db.Uuid
+  customerId   String?   @map("customer_id")
+  productId    String    @map("product_id")
+  rate         Decimal   @db.Decimal(12, 2)
+  rateUnit     String    @map("rate_unit") // HOUR | DAY | WEEK | MONTH
+  deposit      Decimal   @default(0) @db.Decimal(12, 2)
+  outAt        DateTime  @map("out_at")
+  expectedInAt DateTime  @map("expected_in_at")
+  actualInAt   DateTime? @map("actual_in_at")
+  status       String    @default("ACTIVE") // ACTIVE | RETURNED | OVERDUE
+  lateFee      Decimal   @default(0) @map("late_fee") @db.Decimal(12, 2)
+  notes        String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, productId])
+  @@map("rental_agreements")
+}
+
+// ─── Supermarket ─────────────────────────────────────────────────────────────
+
+// Promotional rules evaluated at billing
+// RLS enabled
+model Promotion {
+  id         String    @id @default(cuid())
+  tenantId   String    @map("tenant_id")
+  name       String
+  type       String    // MULTI_BUY | PCT_DISCOUNT | BOGO
+  conditions Json      // {minQty?, productId?, categoryId?, minTotal?}
+  reward     Json      // {discountPct?, discountAmt?, freeQty?}
+  validFrom  DateTime  @map("valid_from")
+  validUntil DateTime? @map("valid_until")
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive])
+  @@map("promotions")
+}

@@ -1,0 +1,92 @@
+import { VerticalPack } from '@omnipos/types';
+
+export const SPARE_PARTS_PACK: VerticalPack = {
+  businessType: 'SPARE_PARTS',
+
+  labels: {
+    product: 'Part',
+    products: 'Parts',
+    sku: 'Internal Code',
+    barcode: 'Barcode / QR',
+    category: 'Category',
+    searchPlaceholder: 'Search by Part No., OEM No., name, vehicle…',
+    receiptTitle: 'PARTS RECEIPT',
+    addProduct: 'Add Part',
+    noProducts: 'No parts found',
+  },
+
+  productFields: [
+    {
+      key: 'part_number',
+      label: 'Part Number',
+      type: 'text',
+      required: true,
+      searchable: true,
+      position: 1,
+      placeholder: 'e.g. BP-12345',
+    },
+    {
+      key: 'oem_number',
+      label: 'OEM Number',
+      type: 'text',
+      required: false,
+      searchable: true,
+      position: 2,
+      placeholder: 'Original equipment number',
+    },
+    {
+      key: 'brand',
+      label: 'Brand',
+      type: 'text',
+      required: false,
+      searchable: false,
+      position: 3,
+      placeholder: 'e.g. Bosch, Denso',
+    },
+    {
+      key: 'vehicle_make',
+      label: 'Vehicle Make',
+      type: 'select',
+      required: false,
+      searchable: true,
+      position: 4,
+      options: [
+        'Toyota', 'Honda', 'Nissan', 'Mitsubishi', 'Suzuki', 'Mazda',
+        'Ford', 'BMW', 'Mercedes-Benz', 'Volkswagen', 'Hyundai', 'Kia',
+        'Isuzu', 'Tata', 'Bajaj', 'Universal', 'Other',
+      ],
+    },
+    {
+      key: 'vehicle_model',
+      label: 'Vehicle Model',
+      type: 'text',
+      required: false,
+      searchable: true,
+      position: 5,
+      placeholder: 'e.g. Corolla, Civic',
+    },
+    {
+      key: 'vehicle_year',
+      label: 'Year (from)',
+      type: 'number',
+      required: false,
+      searchable: false,
+      position: 6,
+      placeholder: 'e.g. 2005',
+    },
+    {
+      key: 'rack_location',
+      label: 'Rack Location',
+      type: 'text',
+      required: false,
+      searchable: false,
+      position: 7,
+      placeholder: 'e.g. A3-S2',
+    },
+  ],
+
+  enabledModules: ['catalog', 'invoices', 'stock', 'suppliers'],
+  defaultTaxRate: 0,
+  receiptTemplate: 'spare_parts',
+  searchFilterKeys: ['part_number', 'oem_number', 'vehicle_make', 'vehicle_model'],
+};

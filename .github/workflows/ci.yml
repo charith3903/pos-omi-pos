@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # ─── TypeScript: lint + build + test ─────────────────────────────────────
+  typescript:
+    name: TypeScript (lint · build · test)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: omnipos
+          POSTGRES_PASSWORD: omnipos
+          POSTGRES_DB: omnipos_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    env:
+      DATABASE_URL: postgresql://omnipos:omnipos@localhost:5432/omnipos_db
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-secret-not-for-production
+      JWT_REFRESH_SECRET: ci-refresh-secret-not-for-production
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build shared types
+        run: npm run build -w packages/types
+
+      - name: Generate Prisma client
+        run: npm run db:generate -w apps/api
+
+      - name: Run Prisma migrations
+        run: npm run migrate:deploy -w apps/api
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build API
+        run: npm run build -w apps/api
+
+      - name: Build Dashboard
+        run: npm run build -w apps/dashboard
+
+      - name: Test API (unit)
+        run: npm run test -w apps/api
+
+      - name: Test API (e2e / RLS isolation)
+        run: npm run test:e2e -w apps/api
+
+  # ─── Flutter: analyze + test ─────────────────────────────────────────────
+  flutter:
+    name: Flutter (analyze · test)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        working-directory: apps/pos
+        run: flutter pub get
+
+      - name: Flutter analyze
+        working-directory: apps/pos
+        run: flutter analyze
+
+      - name: Flutter test
+        working-directory: apps/pos
+        run: flutter test

@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment files — NEVER commit these
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+coverage/
+
+# Prisma generated migrations (commit these in a real project)
+# apps/api/prisma/migrations/
+
+# Flutter
+apps/pos/.dart_tool/
+apps/pos/.flutter-plugins
+apps/pos/.flutter-plugins-dependencies
+apps/pos/build/
+apps/pos/.packages

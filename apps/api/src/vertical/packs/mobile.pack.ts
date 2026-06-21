@@ -1,0 +1,93 @@
+import { VerticalPack } from '@omnipos/types';
+
+export const MOBILE_PACK: VerticalPack = {
+  businessType: 'MOBILE',
+
+  labels: {
+    product: 'Device',
+    products: 'Devices',
+    sku: 'Model Code',
+    barcode: 'IMEI / Barcode',
+    category: 'Category',
+    searchPlaceholder: 'Search by brand, model, IMEI…',
+    receiptTitle: 'SALES RECEIPT',
+    addProduct: 'Add Device',
+    noProducts: 'No devices found',
+  },
+
+  productFields: [
+    {
+      key: 'brand',
+      label: 'Brand',
+      type: 'text',
+      required: true,
+      searchable: true,
+      position: 1,
+    },
+    {
+      key: 'model',
+      label: 'Model',
+      type: 'text',
+      required: true,
+      searchable: true,
+      position: 2,
+    },
+    {
+      key: 'storage',
+      label: 'Storage',
+      type: 'select',
+      required: false,
+      searchable: false,
+      position: 3,
+      options: ['16GB', '32GB', '64GB', '128GB', '256GB', '512GB', '1TB', 'Other'],
+    },
+    {
+      key: 'ram',
+      label: 'RAM',
+      type: 'text',
+      required: false,
+      searchable: false,
+      position: 4,
+      placeholder: 'e.g. 8GB',
+    },
+    {
+      key: 'color',
+      label: 'Color',
+      type: 'text',
+      required: false,
+      searchable: true,
+      position: 5,
+    },
+    {
+      key: 'condition',
+      label: 'Condition',
+      type: 'select',
+      required: true,
+      searchable: false,
+      position: 6,
+      options: ['New', 'Refurbished', 'Used', 'Open-Box'],
+    },
+    {
+      key: 'imei_required',
+      label: 'IMEI Required',
+      type: 'boolean',
+      required: false,
+      searchable: false,
+      position: 7,
+    },
+    {
+      key: 'warranty_months',
+      label: 'Warranty (months)',
+      type: 'number',
+      required: false,
+      searchable: false,
+      position: 8,
+      placeholder: 'e.g. 12',
+    },
+  ],
+
+  enabledModules: ['catalog', 'invoices', 'stock', 'imei', 'repairs'],
+  defaultTaxRate: 0,
+  receiptTemplate: 'mobile',
+  searchFilterKeys: ['brand', 'model'],
+};
