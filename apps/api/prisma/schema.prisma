@@ -81,25 +81,27 @@ model Tenant {
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  users            User[]
-  outlets          Outlet[]
-  devices          Device[]
-  categories       Category[]
-  products         Product[]
-  productVariants  ProductVariant[]
-  stockMovements   StockMovement[]
-  customers        Customer[]
-  suppliers        Supplier[]
-  invoices         Invoice[]
-  invoiceItems     InvoiceItem[]
-  payments         Payment[]
-  invoiceCounter   InvoiceCounter?
-  restaurantTables RestaurantTable[]
-  kots             Kot[]
-  imeiRecords      ImeiRecord[]
-  repairJobs       RepairJob[]
-  rentalAgreements RentalAgreement[]
-  promotions       Promotion[]
+  users                 User[]
+  outlets               Outlet[]
+  devices               Device[]
+  categories            Category[]
+  products              Product[]
+  productVariants       ProductVariant[]
+  stockMovements        StockMovement[]
+  customers             Customer[]
+  suppliers             Supplier[]
+  invoices              Invoice[]
+  invoiceItems          InvoiceItem[]
+  payments              Payment[]
+  invoiceCounter        InvoiceCounter?
+  restaurantTables      RestaurantTable[]
+  kots                  Kot[]
+  imeiRecords           ImeiRecord[]
+  repairJobs            RepairJob[]
+  rentalAgreements      RentalAgreement[]
+  promotions            Promotion[]
+  dailySalesSummaries   DailySalesSummary[]
+  productSalesSummaries ProductSalesSummary[]
 
   @@map("tenants")
 }
@@ -191,11 +193,12 @@ model Product {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  category       Category?        @relation(fields: [categoryId], references: [id])
-  variants       ProductVariant[]
-  stockMovements StockMovement[]
-  invoiceItems   InvoiceItem[]
+  tenant                Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category              Category?             @relation(fields: [categoryId], references: [id])
+  variants              ProductVariant[]
+  stockMovements        StockMovement[]
+  invoiceItems          InvoiceItem[]
+  productSalesSummaries ProductSalesSummary[]
 
   @@unique([tenantId, sku])
   @@index([tenantId, barcode], name: "idx_products_tenant_barcode")
@@ -375,6 +378,52 @@ model InvoiceCounter {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("invoice_counters")
+}
+
+// ─── Reporting Summary Tables ─────────────────────────────────────────────────
+
+// Pre-aggregated by BullMQ nightly job — queried for fast dashboard KPIs.
+// RLS enabled — written and read within tenant context.
+model DailySalesSummary {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  outletId     String   @map("outlet_id")
+  date         DateTime @db.Date
+  totalSales   Decimal  @default(0) @map("total_sales") @db.Decimal(14, 2)
+  totalTax     Decimal  @default(0) @map("total_tax") @db.Decimal(14, 2)
+  totalProfit  Decimal  @default(0) @map("total_profit") @db.Decimal(14, 2)
+  itemsSold    Decimal  @default(0) @map("items_sold") @db.Decimal(14, 3)
+  invoiceCount Int      @default(0) @map("invoice_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, outletId, date])
+  @@index([tenantId, date])
+  @@map("daily_sales_summaries")
+}
+
+// Pre-aggregated per product per day — used for top/slow mover reports.
+// RLS enabled.
+model ProductSalesSummary {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  productId String   @map("product_id")
+  date      DateTime @db.Date
+  qtySold   Decimal  @default(0) @map("qty_sold") @db.Decimal(12, 3)
+  revenue   Decimal  @default(0) @db.Decimal(14, 2)
+  profit    Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, productId, date])
+  @@index([tenantId, date])
+  @@index([tenantId, productId])
+  @@map("product_sales_summaries")
 }
 
 // ─── Restaurant ──────────────────────────────────────────────────────────────

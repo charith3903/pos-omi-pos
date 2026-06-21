@@ -1,5 +1,8 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ReportsModule } from './reports/reports.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -22,6 +25,13 @@ import { VerticalModule } from './vertical/vertical.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        connection: { url: cfg.get('REDIS_URL', 'redis://localhost:6379') },
+      }),
+    }),
     PrismaModule,
     RedisModule,
     TenantModule,
@@ -38,6 +48,7 @@ import { VerticalModule } from './vertical/vertical.module';
     RentalModule,
     SupermarketModule,
     TextileModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
