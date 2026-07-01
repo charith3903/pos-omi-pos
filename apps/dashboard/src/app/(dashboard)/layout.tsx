@@ -33,11 +33,11 @@ import {
   UserCircle,
   Table2,
   ChefHat,
-  ShoppingBag,
   Star,
   Clock,
   LayoutGrid,
   Gift,
+  Wine,
 } from 'lucide-react';
 
 const LOCALES: { code: Locale; label: string }[] = [
@@ -122,8 +122,8 @@ function Sidebar() {
       {/* Main nav */}
       <nav className="flex-1 py-4 flex flex-col gap-1 overflow-y-auto">
         {navItem('/', t('nav.home'), <Home className="w-4 h-4" />)}
-        {navItem('/billing', isSpareParts ? 'POS / Billing' : t('nav.billing'), <Receipt className="w-4 h-4" />)}
-        {navItem('/products', isSpareParts ? 'Parts Catalogue' : t('nav.products'), <Package className="w-4 h-4" />)}
+        {navItem('/billing', isSpareParts ? 'POS / Billing' : isRestaurant ? 'POS / Orders' : t('nav.billing'), <Receipt className="w-4 h-4" />)}
+        {navItem('/products', isSpareParts ? 'Parts Catalogue' : isRestaurant ? 'Food' : t('nav.products'), isRestaurant ? <Utensils className="w-4 h-4" /> : <Package className="w-4 h-4" />)}
 
         {/* Stock & Customer management */}
         <p className="px-6 pt-5 pb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
@@ -140,9 +140,8 @@ function Sidebar() {
             </p>
             {navItem('/restaurant', 'Overview', <LayoutGrid className="w-4 h-4" />)}
             {navItem('/restaurant/floor', 'Floor Plan', <Table2 className="w-4 h-4" />)}
-            {navItem('/restaurant/pos', 'POS / Orders', <ShoppingBag className="w-4 h-4" />)}
             {navItem('/restaurant/kitchen', 'Kitchen (KDS)', <ChefHat className="w-4 h-4" />)}
-            {navItem('/restaurant/menu', 'Menu', <Utensils className="w-4 h-4" />)}
+            {navItem('/restaurant/bar', 'Bar (BOT)', <Wine className="w-4 h-4" />)}
             {navItem('/restaurant/promotions', 'Promotions', <Gift className="w-4 h-4" />)}
             {navItem('/restaurant/loyalty', 'Loyalty', <Star className="w-4 h-4" />)}
             {navItem('/restaurant/shift', 'Shift', <Clock className="w-4 h-4" />)}

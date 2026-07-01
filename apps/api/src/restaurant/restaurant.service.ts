@@ -297,13 +297,14 @@ export class RestaurantService {
 
   // ── KOTs ─────────────────────────────────────────────────────────────────
 
-  listKots(tenantId: string, tableId?: string, status?: string, orderId?: string) {
+  listKots(tenantId: string, tableId?: string, status?: string, orderId?: string, station?: string) {
     return this.prisma.withTenant(tenantId, (tx) =>
       tx.kot.findMany({
         where: {
           ...(tableId && { tableId }),
           ...(status && { status }),
           ...(orderId && { orderId }),
+          ...(station && { station }),
         },
         orderBy: { createdAt: 'desc' },
         take: 200,
@@ -345,6 +346,7 @@ export class RestaurantService {
           orderType: dto.orderType ?? 'DINE_IN',
           items: dto.items as any,
           kotNotes: dto.kotNotes ?? null,
+          station: dto.station ?? 'KITCHEN',
           status: 'PENDING',
         },
       });

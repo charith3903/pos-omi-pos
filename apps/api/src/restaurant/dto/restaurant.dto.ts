@@ -154,6 +154,10 @@ export class CreateKotDto {
   @IsString()
   kotNotes?: string;
 
+  @IsOptional()
+  @IsEnum(['KITCHEN', 'BAR'])
+  station?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => KotItemDto)

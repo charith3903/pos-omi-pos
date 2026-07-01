@@ -473,8 +473,9 @@ model Kot {
   tableId   String?  @map("table_id")
   invoiceId String?  @map("invoice_id") @db.Uuid
   orderType String   @default("DINE_IN") @map("order_type")
-  items     Json     // [{productId, name, portion, portionPrice, qty, notes, modifiers, isComplementary}]
+  items     Json     // [{productId, name, portion, portionPrice, qty, notes, modifiers, isComplementary, stations}]
   portion   String?
+  station   String   @default("KITCHEN") // KITCHEN (KOT) | BAR (BOT) — which station this ticket was fired to
   kotNotes  String?  @map("kot_notes")
   status    String   @default("PENDING") // PENDING | COOKING | READY | DELIVERED | CANCELLED
   createdAt DateTime @default(now()) @map("created_at")
@@ -485,6 +486,7 @@ model Kot {
   order  RestaurantOrder?  @relation(fields: [orderId], references: [id])
 
   @@index([tenantId, status])
+  @@index([tenantId, station])
   @@index([orderId])
   @@map("kots")
 }

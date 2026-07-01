@@ -160,8 +160,9 @@ export class RestaurantController {
     @Query('tableId') tableId?: string,
     @Query('status') status?: string,
     @Query('orderId') orderId?: string,
+    @Query('station') station?: string,
   ) {
-    return this.svc.listKots(u.tenantId, tableId, status, orderId);
+    return this.svc.listKots(u.tenantId, tableId, status, orderId, station);
   }
 
   @Post('kots')

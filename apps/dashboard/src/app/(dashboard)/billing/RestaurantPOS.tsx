@@ -9,7 +9,7 @@ import {
   SplitSquareHorizontal, Zap, Clock
 } from 'lucide-react';
 
-interface CartItem { productId: string; name: string; portion: string; portionPrice: number; qty: number; notes: string; isComplementary: boolean; modifiers: string[] }
+interface CartItem { productId: string; name: string; portion: string; portionPrice: number; qty: number; notes: string; isComplementary: boolean; modifiers: string[]; stations: string[] }
 interface Product { id: string; name: string; price: number; categoryId?: string; category?: { name: string }; attributes?: any }
 interface Category { id: string; name: string }
 
@@ -89,29 +89,29 @@ export default function RestaurantPOS() {
       const p = portions.find((x: any) => x.label === portion);
       if (p) return Number(p.price);
     }
-    if (portion === 'Half') return Number(product.price) * 0.6;
-    if (portion === 'Quarter') return Number(product.price) * 0.4;
     return Number(product.price);
   }
 
+  // Portion buttons only render for genuinely portion-based items — single
+  // items and meal combos each get one fixed-price line, no guessed splits.
   function getProductPortions(product: Product): { label: string; price: number }[] {
-    const attrs = product.attributes?.portions as any[] | undefined;
-    if (attrs?.length) return attrs.map((p: any) => ({ label: p.label, price: Number(p.price) }));
-    return [
-      { label: 'Full', price: Number(product.price) },
-      { label: 'Half', price: Math.round(Number(product.price) * 0.6) },
-    ];
+    const attrs = product.attributes ?? {};
+    if (attrs.itemType === 'PORTION' && attrs.portions?.length) {
+      return attrs.portions.map((p: any) => ({ label: p.label, price: Number(p.price) }));
+    }
+    return [{ label: attrs.itemType === 'MEAL' ? 'Meal' : 'Full', price: Number(product.price) }];
   }
 
   function addToCart(product: Product) {
     const portion = selectedPortion[product.id] ?? getProductPortions(product)[0].label;
     const price = getPortionPrice(product, portion);
+    const stations: string[] = product.attributes?.stations?.length ? product.attributes.stations : ['KITCHEN'];
     setCart(prev => {
       const existing = prev.findIndex(i => i.productId === product.id && i.portion === portion);
       if (existing >= 0) {
         return prev.map((i, idx) => idx === existing ? { ...i, qty: i.qty + 1 } : i);
       }
-      return [...prev, { productId: product.id, name: product.name, portion, portionPrice: price, qty: 1, notes: '', isComplementary: false, modifiers: [] }];
+      return [...prev, { productId: product.id, name: product.name, portion, portionPrice: price, qty: 1, notes: '', isComplementary: false, modifiers: [], stations }];
     });
   }
 
@@ -121,24 +121,45 @@ export default function RestaurantPOS() {
 
   function removeItem(idx: number) { setCart(prev => prev.filter((_, n) => n !== idx)); }
 
+  // Fire a single order: items tagged KITCHEN go to a KOT ticket, items
+  // tagged BAR go to a separate BOT ticket — an item can go to both.
   async function fireKot() {
     if (!cart.length) return;
     setFiringKot(true);
     try {
-      await api.createKot({
-        orderId: orderId ?? undefined,
-        tableId: tableId ?? undefined,
-        orderType: 'DINE_IN',
-        items: cart.map(i => ({
-          productId: i.productId, name: i.name, portion: i.portion,
-          portionPrice: i.portionPrice, qty: i.qty, notes: i.notes || undefined,
-          isComplementary: i.isComplementary, modifiers: i.modifiers,
-        })),
+      const toItemDto = (i: CartItem) => ({
+        productId: i.productId, name: i.name, portion: i.portion,
+        portionPrice: i.portionPrice, qty: i.qty, notes: i.notes || undefined,
+        isComplementary: i.isComplementary, modifiers: i.modifiers,
       });
+
+      const kotItems = cart.filter(i => i.stations.includes('KITCHEN'));
+      const botItems = cart.filter(i => i.stations.includes('BAR'));
+
+      let activeOrderId = orderId ?? undefined;
+      const sent: string[] = [];
+
+      if (kotItems.length) {
+        const kot = await api.createKot({
+          orderId: activeOrderId, tableId: tableId ?? undefined, orderType: 'DINE_IN',
+          station: 'KITCHEN', items: kotItems.map(toItemDto),
+        });
+        activeOrderId = activeOrderId ?? kot.orderId ?? undefined;
+        sent.push(`${kotItems.length} item(s) → KOT`);
+      }
+      if (botItems.length) {
+        const bot = await api.createKot({
+          orderId: activeOrderId, tableId: tableId ?? undefined, orderType: 'DINE_IN',
+          station: 'BAR', items: botItems.map(toItemDto),
+        });
+        activeOrderId = activeOrderId ?? bot.orderId ?? undefined;
+        sent.push(`${botItems.length} item(s) → BOT`);
+      }
+
       setCart([]);
-      showToast('KOT fired to kitchen!');
+      showToast(sent.length ? `Fired: ${sent.join(' · ')}` : 'Order fired!');
       loadData();
-    } catch (e: any) { showToast(e.message ?? 'Failed to fire KOT'); } finally { setFiringKot(false); }
+    } catch (e: any) { showToast(e.message ?? 'Failed to fire order'); } finally { setFiringKot(false); }
   }
 
   async function loadBill() {
@@ -235,11 +256,17 @@ export default function RestaurantPOS() {
               const curPortion = selectedPortion[product.id] ?? portions[0].label;
               const curPrice = getPortionPrice(product, curPortion);
               const isVeg = product.attributes?.is_vegetarian;
+              const isMeal = product.attributes?.itemType === 'MEAL';
               return (
                 <div key={product.id} className="bg-white border border-gray-100 rounded-xl p-3 hover:border-blue-200 hover:shadow-sm transition-all">
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-gray-900 leading-tight truncate">{product.name}</div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="text-sm font-semibold text-gray-900 leading-tight truncate">{product.name}</div>
+                        {isMeal && (
+                          <span className="shrink-0 text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">MEAL</span>
+                        )}
+                      </div>
                       {isVeg != null && (
                         <div className={`inline-flex w-3.5 h-3.5 rounded-sm border-2 mt-0.5 items-center justify-center ${isVeg ? 'border-green-600' : 'border-red-600'}`}>
                           <div className={`w-1.5 h-1.5 rounded-full ${isVeg ? 'bg-green-600' : 'bg-red-600'}`} />
@@ -341,7 +368,15 @@ export default function RestaurantPOS() {
             <div key={idx} className={`bg-white rounded-xl border p-3 ${item.isComplementary ? 'border-green-200 bg-green-50' : 'border-gray-100'}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-gray-900 truncate">{item.name}</div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="text-sm font-semibold text-gray-900 truncate">{item.name}</div>
+                    {item.stations.map(s => (
+                      <span key={s} className={`shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                        s === 'BAR' ? 'bg-cyan-100 text-cyan-700' : 'bg-orange-100 text-orange-700'}`}>
+                        {s === 'BAR' ? 'BOT' : 'KOT'}
+                      </span>
+                    ))}
+                  </div>
                   <div className="text-xs text-blue-600 font-medium">{item.portion} · Rs {item.portionPrice.toLocaleString()}</div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -372,10 +407,10 @@ export default function RestaurantPOS() {
             </div>
           ))}
 
-          {/* Previous KOTs */}
+          {/* Previous KOTs / BOTs */}
           {order?.kots?.length > 0 && (
             <div className="border-t border-gray-200 pt-2 mt-2">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Previous KOTs</p>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Previous Tickets</p>
               {order.kots.map((kot: any) => (
                 <div key={kot.id} className={`text-xs rounded-lg px-3 py-2 mb-1 flex items-center justify-between ${
                   kot.status === 'DELIVERED' ? 'bg-green-50 text-green-700' :
@@ -383,7 +418,13 @@ export default function RestaurantPOS() {
                   kot.status === 'COOKING' ? 'bg-amber-50 text-amber-700' :
                   kot.status === 'CANCELLED' ? 'bg-gray-50 text-gray-400 line-through' :
                   'bg-orange-50 text-orange-700'}`}>
-                  <span>{(kot.items as any[]).length} item(s) · {new Date(kot.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+                      kot.station === 'BAR' ? 'bg-cyan-100 text-cyan-700' : 'bg-orange-100 text-orange-700'}`}>
+                      {kot.station === 'BAR' ? 'BOT' : 'KOT'}
+                    </span>
+                    {(kot.items as any[]).length} item(s) · {new Date(kot.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
                   <span className="font-semibold">{kot.status}</span>
                 </div>
               ))}
@@ -429,7 +470,7 @@ export default function RestaurantPOS() {
             <button onClick={fireKot} disabled={cart.length === 0 || firingKot}
               className="flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-bold transition-colors">
               {firingKot ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
-              Fire KOT
+              Fire Order
             </button>
             <button onClick={loadBill} disabled={billing || !orderId}
               className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-3 rounded-xl text-sm font-bold transition-colors">

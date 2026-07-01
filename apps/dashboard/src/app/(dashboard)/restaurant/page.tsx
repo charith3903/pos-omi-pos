@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import Link from 'next/link';
-import { UtensilsCrossed, Table2, ChefHat, ShoppingBag, TrendingUp, Users, Clock, Star, ArrowRight, Activity } from 'lucide-react';
+import { UtensilsCrossed, Table2, ChefHat, ShoppingBag, TrendingUp, Users, Clock, Star, ArrowRight, Activity, Wine } from 'lucide-react';
 
 export default function RestaurantDashboard() {
   const [tables, setTables] = useState<any[]>([]);
@@ -33,9 +33,10 @@ export default function RestaurantDashboard() {
 
   const quickLinks = [
     { href: '/restaurant/floor', icon: <Table2 className="w-6 h-6" />, label: 'Floor Plan', desc: 'Manage tables & orders', color: 'bg-blue-500' },
-    { href: '/restaurant/pos', icon: <ShoppingBag className="w-6 h-6" />, label: 'POS / Order', desc: 'Take new orders', color: 'bg-green-500' },
+    { href: '/billing', icon: <ShoppingBag className="w-6 h-6" />, label: 'POS / Order', desc: 'Take new orders', color: 'bg-green-500' },
     { href: '/restaurant/kitchen', icon: <ChefHat className="w-6 h-6" />, label: 'Kitchen (KDS)', desc: 'Live KOT display', color: 'bg-orange-500' },
-    { href: '/restaurant/menu', icon: <UtensilsCrossed className="w-6 h-6" />, label: 'Menu', desc: 'Manage items & portions', color: 'bg-purple-500' },
+    { href: '/restaurant/bar', icon: <Wine className="w-6 h-6" />, label: 'Bar (BOT)', desc: 'Live BOT display', color: 'bg-cyan-500' },
+    { href: '/products', icon: <UtensilsCrossed className="w-6 h-6" />, label: 'Food Menu', desc: 'Manage items & portions', color: 'bg-purple-500' },
     { href: '/restaurant/loyalty', icon: <Star className="w-6 h-6" />, label: 'Loyalty', desc: 'Points & rewards', color: 'bg-amber-500' },
     { href: '/restaurant/shift', icon: <Clock className="w-6 h-6" />, label: 'Shift', desc: shift ? `Shift open` : 'Open shift', color: shift ? 'bg-emerald-500' : 'bg-gray-400' },
   ];
@@ -53,7 +54,7 @@ export default function RestaurantDashboard() {
             )}
           </p>
         </div>
-        <Link href="/restaurant/pos" className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors">
+        <Link href="/billing" className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors">
           <ShoppingBag className="w-4 h-4" /> New Order
         </Link>
       </div>

@@ -141,11 +141,12 @@ export const api = {
     request<any>(`/restaurant/split/${splitId}/paid`, { method: 'PATCH' }),
 
   // ─── KOT ─────────────────────────────────────────────────────────────────
-  getKots: (params?: { tableId?: string; status?: string; orderId?: string }) => {
+  getKots: (params?: { tableId?: string; status?: string; orderId?: string; station?: string }) => {
     const q = new URLSearchParams();
     if (params?.tableId) q.set('tableId', params.tableId);
     if (params?.status) q.set('status', params.status);
     if (params?.orderId) q.set('orderId', params.orderId);
+    if (params?.station) q.set('station', params.station);
     return request<any[]>(`/restaurant/kots?${q}`);
   },
   createKot: (data: any) =>

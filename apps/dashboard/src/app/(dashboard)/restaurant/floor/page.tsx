@@ -51,14 +51,14 @@ export default function FloorPlanPage() {
     setUpdating(table.id);
     try {
       const order = await api.createOrder({ tableId: table.id, orderType: 'DINE_IN', guestCount: 1 });
-      router.push(`/restaurant/pos?orderId=${order.id}&tableId=${table.id}`);
+      router.push(`/billing?orderId=${order.id}&tableId=${table.id}`);
     } catch { setUpdating(null); }
   }
 
   async function viewOrder(table: any) {
     const activeOrder = table.orders?.[0];
     if (activeOrder) {
-      router.push(`/restaurant/pos?orderId=${activeOrder.id}&tableId=${table.id}`);
+      router.push(`/billing?orderId=${activeOrder.id}&tableId=${table.id}`);
     }
   }
 
