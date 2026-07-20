@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { FileText, Search, ChevronLeft, ChevronRight, Loader2, X, Package } from 'lucide-react';
+import { FileText, ChevronLeft, ChevronRight, Loader2, X, Package } from 'lucide-react';
 
 export default function InvoicesPage() {
   const [page, setPage] = useState(1);

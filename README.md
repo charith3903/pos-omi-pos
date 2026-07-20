@@ -141,7 +141,8 @@ See [`.env.example`](.env.example) for the full list.
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
+| `DATABASE_URL` | PostgreSQL connection string used by the app at runtime — must be the least-privilege `omnipos_app` role (see `apps/api/prisma/bootstrap-app-role.sql`), never the migration owner, or RLS tenant isolation is silently bypassed |
+| `DIRECT_DATABASE_URL` | PostgreSQL connection string used by `prisma migrate`/`db push` — needs DDL rights, so this stays the owner role |
 | `REDIS_URL` | Redis connection string |
 | `JWT_SECRET` | Token signing secret |
 | `JWT_EXPIRES_IN` | Access token lifetime (e.g. `7d`) |

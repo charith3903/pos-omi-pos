@@ -6,7 +6,14 @@ export interface Session {
   accessToken: string;
   refreshToken: string;
   user: { id: string; name: string; email: string; role: string; tenantId: string };
-  tenant: { id: string; name: string; subdomain: string; businessType?: string };
+  tenant: {
+    id: string;
+    name: string;
+    subdomain: string;
+    businessType?: string;
+    status?: string;
+    trialEndsAt?: string | null;
+  };
 }
 
 export function getSession(): Session | null {

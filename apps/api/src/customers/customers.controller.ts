@@ -1,12 +1,13 @@
 import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 
 @Controller('customers')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard)
 export class CustomersController {
   constructor(private readonly svc: CustomersService) {}
 

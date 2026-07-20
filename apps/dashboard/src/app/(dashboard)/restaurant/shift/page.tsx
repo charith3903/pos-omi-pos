@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { Clock, DollarSign, Play, Square, Loader2, CheckCircle, AlertCircle, X } from 'lucide-react';
+import { Play, Square, Loader2, AlertCircle, X } from 'lucide-react';
 
 export default function ShiftPage() {
   const [current, setCurrent] = useState<any | null>(null);

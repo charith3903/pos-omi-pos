@@ -4,16 +4,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import {
-  Search, Plus, Minus, X, Send, FileText, Star, Printer,
-  ChevronRight, Loader2, AlertCircle, CheckCircle, Gift,
-  SplitSquareHorizontal, Zap, Clock
+  Search, Plus, Minus, X, FileText, Star, Printer,
+  Loader2, AlertCircle, CheckCircle, Gift,
+  SplitSquareHorizontal, Clock
 } from 'lucide-react';
 
 interface CartItem { productId: string; name: string; portion: string; portionPrice: number; qty: number; notes: string; isComplementary: boolean; modifiers: string[]; stations: string[] }
 interface Product { id: string; name: string; price: number; categoryId?: string; category?: { name: string }; attributes?: any }
 interface Category { id: string; name: string }
-
-const PORTION_LABELS = ['Full', 'Half', 'Quarter'];
 
 export default function RestaurantPOS() {
   const sp = useSearchParams();

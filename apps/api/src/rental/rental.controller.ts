@@ -12,12 +12,13 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CreateRentalAgreementDto, ReturnRentalDto } from './dto/rental.dto';
 import { RentalService } from './rental.service';
 
 @Controller('rental')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard)
 export class RentalController {
   constructor(private readonly svc: RentalService) {}
 

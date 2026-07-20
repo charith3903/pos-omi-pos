@@ -85,7 +85,13 @@ export const SPARE_PARTS_PACK: VerticalPack = {
     },
   ],
 
-  enabledModules: ['catalog', 'invoices', 'stock', 'suppliers'],
+  // Matches every dashboard nav item actually shown for this vertical
+  // (apps/dashboard/.../layout.tsx isSpareParts block): job-cards + IMEI
+  // lookup live under the `mobile` module, warranty/refunds/purchasing are
+  // their own modules. Kept in sync deliberately — SubscriptionGuard's
+  // pack-membership check (Phase 3) treats this array as the source of
+  // truth for which modules a Spare Parts tenant may reach at all.
+  enabledModules: ['catalog', 'invoices', 'stock', 'suppliers', 'mobile', 'warranty', 'purchasing', 'refunds'],
   defaultTaxRate: 0,
   receiptTemplate: 'spare_parts',
   searchFilterKeys: ['part_number', 'oem_number', 'vehicle_make', 'vehicle_model'],

@@ -3,6 +3,7 @@ import { IsEnum, IsNumber, IsOptional, IsString } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { StockService } from './stock.service';
@@ -27,7 +28,7 @@ class AdjustStockDto {
 }
 
 @Controller('stock')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, RolesGuard)
 export class StockController {
   constructor(private readonly svc: StockService) {}
 

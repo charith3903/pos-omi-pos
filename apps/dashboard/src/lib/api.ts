@@ -20,6 +20,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   const body = await res.json().catch(() => ({}));
+
+  if (res.status === 402) {
+    // Subscription suspended / trial expired — SubscriptionGuard's response.
+    // Redirect to the reactivation page instead of surfacing a raw error,
+    // unless we're already there (avoid a redirect loop).
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/account/subscription')) {
+      window.location.href = '/account/subscription?reason=expired';
+    }
+    throw new Error(body?.message ?? 'Subscription required');
+  }
+
   if (!res.ok) throw new Error(body?.message ?? `HTTP ${res.status}`);
   return body as T;
 }
@@ -238,4 +249,21 @@ export const api = {
     request<any>('/warranty', { method: 'POST', body: JSON.stringify(data) }),
   updateWarrantyStatus: (id: string, status: string) =>
     request<any>(`/warranty/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+
+  // ─── Products (vertical attribute search) ───────────────────────────────
+  searchProductsVertical: (query: string, limit = 8) =>
+    request<any[]>(`/products/search?q=${encodeURIComponent(query)}&limit=${limit}`),
+
+  // ─── Billing / Subscription ──────────────────────────────────────────────
+  getPlans: (businessType?: string) =>
+    request<any[]>(`/billing/plans${businessType ? `?businessType=${businessType}` : ''}`),
+  getSubscription: () => request<any>('/billing/subscription'),
+  getBillingHistory: () => request<any[]>('/billing/subscription/history'),
+  createCheckout: (data: { gateway: 'STRIPE' | 'PAYPAL' | 'PAYHERE'; billingCycle: 'MONTHLY' | 'ANNUAL'; currency: 'USD' | 'LKR' }) =>
+    request<{ redirectUrl: string; gatewayRef: string }>('/billing/subscription/checkout', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  cancelSubscription: () =>
+    request<{ cancelled: boolean }>('/billing/subscription/cancel', { method: 'POST' }),
 };

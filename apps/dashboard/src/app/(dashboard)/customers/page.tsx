@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { Users, Plus, Search, Phone, Mail, MapPin, RefreshCw, Loader2, X, Pencil, UserCircle } from 'lucide-react';
+import { Users, Plus, Search, Phone, Mail, RefreshCw, Loader2, X, Pencil, UserCircle } from 'lucide-react';
 
 const EMPTY_FORM = { name: '', email: '', phone: '', address: '' };
 

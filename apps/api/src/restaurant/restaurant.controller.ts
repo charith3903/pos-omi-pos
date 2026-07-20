@@ -15,6 +15,7 @@ import {
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import {
@@ -32,7 +33,7 @@ import {
 import { RestaurantService } from './restaurant.service';
 
 @Controller('restaurant')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, RolesGuard)
 export class RestaurantController {
   constructor(private readonly svc: RestaurantService) {}
 

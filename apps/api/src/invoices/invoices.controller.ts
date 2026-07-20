@@ -1,12 +1,13 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { InvoicesService } from './invoices.service';
 
 @Controller('invoices')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard)
 export class InvoicesController {
   constructor(private readonly svc: InvoicesService) {}
 

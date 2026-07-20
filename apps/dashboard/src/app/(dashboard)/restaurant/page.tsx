@@ -3,14 +3,13 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import Link from 'next/link';
-import { UtensilsCrossed, Table2, ChefHat, ShoppingBag, TrendingUp, Users, Clock, Star, ArrowRight, Activity, Wine } from 'lucide-react';
+import { UtensilsCrossed, Table2, ChefHat, ShoppingBag, Clock, Star, ArrowRight, Activity, Wine } from 'lucide-react';
 
 export default function RestaurantDashboard() {
   const [tables, setTables] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [kots, setKots] = useState<any[]>([]);
   const [shift, setShift] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
@@ -23,7 +22,6 @@ export default function RestaurantDashboard() {
       setOrders(o as any[]);
       setKots(k as any[]);
       setShift(s);
-      setLoading(false);
     });
   }, []);
 

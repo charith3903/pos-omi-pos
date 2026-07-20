@@ -15,6 +15,12 @@ export type TenantPlan = 'STARTER' | 'PROFESSIONAL' | 'ENTERPRISE';
 export type TenantStatus = 'TRIAL' | 'ACTIVE' | 'SUSPENDED';
 export type UserRole = 'OWNER' | 'MANAGER' | 'CASHIER';
 
+export type SubscriptionStatus = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'SUSPENDED' | 'CANCELLED';
+export type BillingCycle = 'MONTHLY' | 'ANNUAL';
+export type PaymentGateway = 'STRIPE' | 'PAYPAL' | 'PAYHERE';
+export type BillingTxnStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'REFUNDED';
+export type BillingCurrency = 'USD' | 'LKR';
+
 // ─── Domain models ───────────────────────────────────────────────────────────
 
 export interface Tenant {
@@ -24,6 +30,7 @@ export interface Tenant {
   businessType: BusinessType;
   plan: TenantPlan;
   status: TenantStatus;
+  trialEndsAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -121,6 +128,61 @@ export interface VerticalPack {
   defaultTaxRate: number;
   receiptTemplate: 'standard' | 'spare_parts' | 'restaurant' | 'mobile' | 'rental';
   searchFilterKeys: string[];
+}
+
+// ─── Billing & Subscriptions ──────────────────────────────────────────────────
+
+export interface Plan {
+  id: string;
+  businessType: BusinessType;
+  name: string;
+  priceUsdMonthly: string;
+  priceUsdAnnual?: string | null;
+  priceLkrMonthly?: string | null;
+  priceLkrAnnual?: string | null;
+  trialDays: number;
+  includedModules: string[];
+  isActive: boolean;
+}
+
+export interface AddOnModule {
+  id: string;
+  moduleKey: string;
+  name: string;
+  description?: string | null;
+  priceUsdMonthly: string;
+  priceLkrMonthly?: string | null;
+  applicableBusinessTypes: BusinessType[];
+  isActive: boolean;
+}
+
+export interface Subscription {
+  id: string;
+  tenantId: string;
+  planId: string;
+  plan?: Plan;
+  status: SubscriptionStatus;
+  billingCycle: BillingCycle;
+  currency: BillingCurrency;
+  gateway?: PaymentGateway | null;
+  trialEndsAt?: Date | null;
+  currentPeriodStart?: Date | null;
+  currentPeriodEnd?: Date | null;
+  cancelAtPeriodEnd: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface BillingTransaction {
+  id: string;
+  tenantId: string;
+  subscriptionId?: string | null;
+  gateway: PaymentGateway;
+  amount: string;
+  currency: BillingCurrency;
+  status: BillingTxnStatus;
+  description?: string | null;
+  createdAt: Date;
 }
 
 // ─── Health ──────────────────────────────────────────────────────────────────

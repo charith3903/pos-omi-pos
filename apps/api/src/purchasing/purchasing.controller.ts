@@ -1,9 +1,12 @@
 import { Controller, Get, Post, Body, Param, Put, UseGuards, Req } from '@nestjs/common';
 import { PurchasingService } from './purchasing.service';
+import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 
 @Controller('purchasing')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard)
+@RequiresModule('purchasing')
 export class PurchasingController {
   constructor(private readonly purchasingService: PurchasingService) {}
 

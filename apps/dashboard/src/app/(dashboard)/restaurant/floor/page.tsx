@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Plus, RefreshCw, Users, Clock, X, Loader2, AlertCircle } from 'lucide-react';
 

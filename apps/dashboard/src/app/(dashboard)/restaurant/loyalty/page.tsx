@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { Star, Plus, Loader2, Search, ChevronRight, X, TrendingUp, Award, Gift, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { Star, Plus, Loader2, Search, X, Award, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 
 const TIER_COLORS: Record<string, { bg: string; text: string; border: string; icon: string }> = {
   BRONZE:   { bg: 'bg-amber-50',   text: 'text-amber-700',  border: 'border-amber-200',  icon: '🥉' },

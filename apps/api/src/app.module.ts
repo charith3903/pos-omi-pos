@@ -28,6 +28,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { OutletsModule } from './outlets/outlets.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { ShiftsModule } from './shifts/shifts.module';
+import { BillingModule } from './billing/billing.module';
 
 @Module({
   imports: [
@@ -63,6 +64,7 @@ import { ShiftsModule } from './shifts/shifts.module';
     OutletsModule,
     LoyaltyModule,
     ShiftsModule,
+    BillingModule,
   ],
   controllers: [AppController],
   providers: [AppService],

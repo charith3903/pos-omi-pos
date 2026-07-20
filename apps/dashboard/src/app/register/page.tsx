@@ -178,7 +178,7 @@ export default function RegisterPage() {
         user: res.user,
         tenant: res.tenant ?? { id: res.user.tenantId, name: form.tenantName, subdomain: form.subdomain, businessType: form.businessType },
       });
-      router.push('/billing');
+      router.push('/onboarding/plan');
     } catch (err: any) {
       setError(err.message ?? 'Registration failed. Please try again.');
     } finally {

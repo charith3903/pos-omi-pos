@@ -13,13 +13,14 @@ import {
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { ApplyPromotionsDto, CreatePromotionDto } from './dto/supermarket.dto';
 import { SupermarketService } from './supermarket.service';
 
 @Controller('supermarket')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, RolesGuard)
 export class SupermarketController {
   constructor(private readonly svc: SupermarketService) {}
 

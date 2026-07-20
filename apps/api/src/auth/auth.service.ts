@@ -34,11 +34,17 @@ export class AuthService {
     // default outlet + owner user (RLS now satisfied because tenantId matches
     // the current_setting we just set inside the transaction).
     const result = await this.prisma.$transaction(async (tx) => {
+      const plan = await tx.plan.findUnique({ where: { businessType: dto.businessType } });
+
+      const trialEndsAt = new Date(Date.now() + (plan?.trialDays ?? 14) * 24 * 60 * 60 * 1000);
+
       const tenant = await tx.tenant.create({
         data: {
           name: dto.tenantName,
           subdomain: dto.subdomain,
           businessType: dto.businessType,
+          status: 'TRIAL',
+          trialEndsAt,
         },
       });
 
@@ -64,6 +70,21 @@ export class AuthService {
           },
         }),
       ]);
+
+      // Free trial, no card required: every new tenant gets a usable
+      // Subscription in TRIALING status immediately — no payment step is
+      // required to reach the working dashboard (see onboarding/plan for the
+      // optional "pay now" path).
+      if (plan) {
+        await tx.subscription.create({
+          data: {
+            tenantId: tenant.id,
+            planId: plan.id,
+            status: 'TRIALING',
+            trialEndsAt,
+          },
+        });
+      }
 
       return { tenant, outlet, user };
     });
@@ -109,6 +130,17 @@ export class AuthService {
       tx.user.findUnique({ where: { id: userId } }),
     );
     if (!user) throw new UnauthorizedException();
+
+    // Belt-and-suspenders: SubscriptionGuard already re-checks tenant status
+    // fresh on every request, so this isn't the primary enforcement point —
+    // but refusing to mint a new 15-minute access token for an already-
+    // suspended tenant closes the gap slightly earlier.
+    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+    const trialExpired = tenant?.status === 'TRIAL' && !!tenant.trialEndsAt && tenant.trialEndsAt < new Date();
+    if (tenant?.status === 'SUSPENDED' || trialExpired) {
+      throw new UnauthorizedException('Subscription inactive or trial expired');
+    }
+
     return { accessToken: this.issueTokens(user).accessToken };
   }
 

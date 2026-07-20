@@ -11,13 +11,16 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CreateRepairJobDto, RecordImeiDto, UpdateRepairJobDto } from './dto/mobile.dto';
 import { MobileService } from './mobile.service';
 
 @Controller('mobile')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard)
+@RequiresModule('mobile')
 export class MobileController {
   constructor(private readonly svc: MobileService) {}
 

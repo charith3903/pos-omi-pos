@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { Plus, Tag, Loader2, X, AlertCircle, CheckCircle, Calendar, Percent } from 'lucide-react';
+import { Plus, Tag, Loader2, X, Calendar, Percent } from 'lucide-react';
 
 const PROMO_TYPES = [
   { value: 'PERCENTAGE', label: 'Percentage Off', desc: 'e.g. 20% off total bill' },
