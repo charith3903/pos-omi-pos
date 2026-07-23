@@ -266,7 +266,7 @@ export const api = {
     request<any>('/refunds', { method: 'POST', body: JSON.stringify(data) }),
 
   // ─── Warranty ────────────────────────────────────────────────────────────
-  getWarrantyClaims: () => request<any[]>('/warranty'),
+  getWarrantyClaims: () => request<{ items: any[]; total: number; page: number; limit: number }>('/warranty'),
   createWarrantyClaim: (data: any) =>
     request<any>('/warranty', { method: 'POST', body: JSON.stringify(data) }),
   updateWarrantyStatus: (id: string, status: string) =>

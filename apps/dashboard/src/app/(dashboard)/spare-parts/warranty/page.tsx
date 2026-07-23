@@ -26,7 +26,7 @@ export default function WarrantyPage() {
     try {
       setLoading(true);
       const res = await api.getWarrantyClaims();
-      setClaims(res || []);
+      setClaims(res?.items || []);
     } catch (e) {
       console.error(e);
     } finally {
