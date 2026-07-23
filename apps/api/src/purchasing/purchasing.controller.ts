@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Put, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Put, Query, UseGuards, Req } from '@nestjs/common';
 import { PurchasingService } from './purchasing.service';
 import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -30,5 +30,11 @@ export class PurchasingController {
   @Post('grn')
   createGrn(@Req() req, @Body() body) {
     return this.purchasingService.createGrn(req.user.tenantId, body);
+  }
+
+  // ── Batches (batch-wise stock/pricing) ──
+  @Get('batches')
+  getBatches(@Req() req, @Query('productId') productId?: string, @Query('variantId') variantId?: string) {
+    return this.purchasingService.getBatches(req.user.tenantId, productId, variantId);
   }
 }

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 
 const INVOICE_INCLUDE = {
@@ -12,9 +13,12 @@ const INVOICE_INCLUDE = {
 
 @Injectable()
 export class InvoicesService {
+  private readonly logger = new Logger(InvoicesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Create (idempotent) ────────────────────────────────────────────────
@@ -24,7 +28,7 @@ export class InvoicesService {
   // without side-effects — safe to retry on network failure.
 
   async create(tenantId: string, dto: CreateInvoiceDto) {
-    return this.prisma.withTenant(tenantId, async (tx) => {
+    const invoice = await this.prisma.withTenant(tenantId, async (tx) => {
       // ── Idempotency guard ─────────────────────────────────────────────
       const existing = await tx.invoice.findUnique({
         where: { id: dto.id },
@@ -101,18 +105,71 @@ export class InvoicesService {
       });
 
       // ── Write stock movements (append-only ledger) ────────────────────
-      // Negative delta = stock out (sale).  Only for products that track stock.
-      const movementData = dto.items
-        .filter((item) => productMap.get(item.productId)?.trackStock)
-        .map((item) => ({
-          tenantId,
-          productId: item.productId,
-          variantId: item.variantId ?? null,
-          qtyDelta: -Number(item.qty),
-          reason: 'SALE' as const,
-          refId: invoice.id,
-          deviceId: dto.deviceId ?? null,
-        }));
+      // Negative delta = stock out (sale). Depletes the oldest remaining
+      // batch(es) first (FIFO) so batch stock levels and per-batch cost stay
+      // accurate — a sale can span more than one batch if it outlasts the
+      // oldest one's remaining qty. Items with no batch history (manual
+      // stock, or GRN predates batch tracking) fall back to an unbatched
+      // movement, same as before.
+      const movementData: {
+        tenantId: string;
+        productId: string;
+        variantId: string | null;
+        batchId?: string;
+        unitCost?: any;
+        qtyDelta: number;
+        reason: 'SALE';
+        refId: string;
+        deviceId: string | null;
+      }[] = [];
+
+      for (const item of dto.items) {
+        if (!productMap.get(item.productId)?.trackStock) continue;
+        let remaining = Number(item.qty);
+
+        const batches = await tx.goodsReceivedNoteItem.findMany({
+          where: {
+            tenantId,
+            productId: item.productId,
+            variantId: item.variantId ?? null,
+            qtyRemaining: { gt: 0 },
+          },
+          orderBy: { grn: { createdAt: 'asc' } },
+        });
+
+        for (const batch of batches) {
+          if (remaining <= 0) break;
+          const deduct = Math.min(remaining, Number(batch.qtyRemaining));
+          await tx.goodsReceivedNoteItem.update({
+            where: { id: batch.id },
+            data: { qtyRemaining: { decrement: deduct } },
+          });
+          movementData.push({
+            tenantId,
+            productId: item.productId,
+            variantId: item.variantId ?? null,
+            batchId: batch.id,
+            unitCost: batch.unitCost,
+            qtyDelta: -deduct,
+            reason: 'SALE',
+            refId: invoice.id,
+            deviceId: dto.deviceId ?? null,
+          });
+          remaining -= deduct;
+        }
+
+        if (remaining > 0) {
+          movementData.push({
+            tenantId,
+            productId: item.productId,
+            variantId: item.variantId ?? null,
+            qtyDelta: -remaining,
+            reason: 'SALE',
+            refId: invoice.id,
+            deviceId: dto.deviceId ?? null,
+          });
+        }
+      }
 
       if (movementData.length) {
         await tx.stockMovement.createMany({ data: movementData });
@@ -129,6 +186,30 @@ export class InvoicesService {
         include: INVOICE_INCLUDE,
       });
     });
+
+    // Fire-and-forget: a sale must never fail because messaging did. Runs
+    // after the transaction commits so a slow/down provider can't hold up
+    // the checkout response.
+    this.autoSendReceipt(tenantId, invoice).catch((err) =>
+      this.logger.warn(`Auto receipt send failed for invoice ${invoice?.id}: ${err.message}`),
+    );
+
+    return invoice;
+  }
+
+  private async autoSendReceipt(tenantId: string, invoice: any) {
+    const phone = invoice?.customer?.phone;
+    if (!phone) return;
+
+    const settings = await this.notifications.getSettings(tenantId);
+    const body = `Thank you for your purchase!\nReceipt ${invoice.number}\nTotal: LKR ${Number(invoice.total).toFixed(2)}`;
+
+    if (settings.whatsappEnabled && settings.autoSendReceiptWhatsapp) {
+      await this.notifications.send(tenantId, { channel: 'WHATSAPP', to: phone, body, relatedInvoiceId: invoice.id });
+    }
+    if (settings.smsEnabled && settings.autoSendReceiptSms) {
+      await this.notifications.send(tenantId, { channel: 'SMS', to: phone, body, relatedInvoiceId: invoice.id });
+    }
   }
 
   // ─── Queries ────────────────────────────────────────────────────────────

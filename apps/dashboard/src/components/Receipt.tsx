@@ -1,7 +1,8 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { getSession } from '@/lib/auth';
+import { api } from '@/lib/api';
 import type { VerticalPack } from '@/lib/vertical';
 
 interface ReceiptItem {
@@ -14,9 +15,10 @@ interface ReceiptItem {
 }
 
 interface ReceiptData {
+  id?: string;
   number: string;
   createdAt: string;
-  customer?: { name: string } | null;
+  customer?: { name: string; phone?: string | null } | null;
   outlet?: { name: string } | null;
   items: ReceiptItem[];
   subtotal: number | string;
@@ -41,6 +43,23 @@ export function Receipt({
 }) {
   const session = getSession();
   const ref = useRef<HTMLDivElement>(null);
+  const [sending, setSending] = useState<'WHATSAPP' | 'SMS' | null>(null);
+  const [sendResult, setSendResult] = useState<string | null>(null);
+
+  async function sendReceipt(channel: 'WHATSAPP' | 'SMS') {
+    if (!data.customer?.phone) return;
+    setSending(channel);
+    setSendResult(null);
+    const body = `Thank you for your purchase at ${session?.tenant?.name ?? 'our store'}!\nReceipt ${data.number}\nTotal: ${fmt(data.total)}`;
+    try {
+      const result = await api.sendNotification({ channel, to: data.customer.phone, body, relatedInvoiceId: data.id });
+      setSendResult(result.status === 'SENT' ? `Sent via ${channel === 'WHATSAPP' ? 'WhatsApp' : 'SMS'}!` : `Failed: ${result.errorMessage ?? 'unknown error'}`);
+    } catch (err: any) {
+      setSendResult(err.message ?? 'Failed to send');
+    } finally {
+      setSending(null);
+    }
+  }
 
   function print() {
     const content = ref.current?.innerHTML ?? '';
@@ -80,6 +99,24 @@ export function Receipt({
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <span className="font-semibold text-gray-900">Receipt #{data.number}</span>
           <div className="flex gap-2">
+            {data.customer?.phone && (
+              <>
+                <button
+                  onClick={() => sendReceipt('WHATSAPP')}
+                  disabled={sending !== null}
+                  className="border border-green-600 text-green-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-green-50 disabled:opacity-40"
+                >
+                  {sending === 'WHATSAPP' ? 'Sending…' : '📱 WhatsApp'}
+                </button>
+                <button
+                  onClick={() => sendReceipt('SMS')}
+                  disabled={sending !== null}
+                  className="border border-blue-600 text-blue-700 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:opacity-40"
+                >
+                  {sending === 'SMS' ? 'Sending…' : '💬 SMS'}
+                </button>
+              </>
+            )}
             <button
               onClick={print}
               className="bg-primary-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium hover:bg-primary-800"
@@ -94,6 +131,9 @@ export function Receipt({
             </button>
           </div>
         </div>
+        {sendResult && (
+          <div className="px-6 py-2 text-xs text-center text-gray-600 bg-gray-50 border-b">{sendResult}</div>
+        )}
 
         {/* Receipt body — also used for print */}
         <div ref={ref} className="p-6 font-mono text-xs">

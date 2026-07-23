@@ -29,6 +29,7 @@ import { OutletsModule } from './outlets/outlets.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { ShiftsModule } from './shifts/shifts.module';
 import { BillingModule } from './billing/billing.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { BillingModule } from './billing/billing.module';
     LoyaltyModule,
     ShiftsModule,
     BillingModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -5,9 +5,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { I18nProvider, useI18n, type Locale } from '@/lib/i18n';
 import { clearSession, getSession } from '@/lib/auth';
-import { useBusinessType } from '@/hooks/useVerticalPack';
+import { useBusinessType, useVerticalPack } from '@/hooks/useVerticalPack';
 import { api } from '@/lib/api';
 import {
+  Layers,
+  MessageCircle,
   Home,
   Receipt,
   Package,
@@ -52,6 +54,7 @@ function Sidebar() {
   const router = useRouter();
   const { t, locale, setLocale } = useI18n();
   const businessType = useBusinessType();
+  const { pack } = useVerticalPack();
   const [mounted, setMounted] = useState(false);
   const [lowStockCount, setLowStockCount] = useState(0);
 
@@ -98,6 +101,11 @@ function Sidebar() {
 
   const isSpareParts = businessType === 'SPARE_PARTS';
   const isRestaurant = businessType === 'RESTAURANT';
+  // Spare parts already has its own Procurement section (below) pointing at
+  // /spare-parts/*; this generic one covers any other vertical pack that
+  // lists 'purchasing' (currently just TEXTILE) without duplicating nav for
+  // spare parts.
+  const hasGenericPurchasing = pack.enabledModules.includes('purchasing') && !isSpareParts;
 
   let brandSub: React.ReactNode = 'Dashboard';
   if (isSpareParts) brandSub = <span className="flex items-center gap-1.5"><Wrench className="w-3.5 h-3.5" /> Spare Parts</span>;
@@ -168,6 +176,18 @@ function Sidebar() {
           </>
         )}
 
+        {hasGenericPurchasing && (
+          <>
+            <p className="px-6 pt-5 pb-2 text-xs font-semibold text-blue-400 uppercase tracking-wider">
+              Purchasing
+            </p>
+            {navItem('/purchasing/suppliers', 'Suppliers', <Factory className="w-4 h-4" />)}
+            {navItem('/purchasing/purchase-orders', 'Purchase Orders', <FileSpreadsheet className="w-4 h-4" />)}
+            {navItem('/purchasing/grn', 'Goods Received (GRN)', <Truck className="w-4 h-4" />)}
+            {navItem('/purchasing/batches', 'Batch Stock', <Layers className="w-4 h-4" />)}
+          </>
+        )}
+
         {/* Reports section */}
         <p className="px-6 pt-5 pb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
           {t('nav.reports')}
@@ -182,6 +202,7 @@ function Sidebar() {
           Account
         </p>
         {navItem('/account/subscription', 'Subscription & Billing', <CreditCard className="w-4 h-4" />)}
+        {navItem('/settings/messaging', 'Messaging (WhatsApp/SMS)', <MessageCircle className="w-4 h-4" />)}
       </nav>
 
       {/* Footer: locale + sign out */}

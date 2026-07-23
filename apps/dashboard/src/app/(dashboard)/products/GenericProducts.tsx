@@ -171,6 +171,89 @@ function ProductForm({
   );
 }
 
+// ─── Variant matrix (size × color) ────────────────────────────────────────────
+
+function VariantsModal({ product, onClose }: { product: Product; onClose: () => void }) {
+  const [variants, setVariants] = useState<any[]>([]);
+  const [sizes, setSizes] = useState('S, M, L, XL');
+  const [colors, setColors] = useState('Black, White');
+  const [barcodePrefix, setBarcodePrefix] = useState(product.sku ?? '');
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+
+  function load() {
+    api.listVariants(product.id).then((res) => setVariants(res.variants)).catch(() => {});
+  }
+
+  useEffect(load, [product.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleGenerate() {
+    setGenerating(true);
+    setError('');
+    try {
+      await api.generateVariants({
+        productId: product.id,
+        sizes: sizes.split(',').map((s) => s.trim()).filter(Boolean),
+        colors: colors.split(',').map((c) => c.trim()).filter(Boolean),
+        barcodePrefix: barcodePrefix || undefined,
+      });
+      load();
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to generate variants');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="font-semibold text-gray-900">Variants — {product.name}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Sizes (comma separated)</label>
+              <input value={sizes} onChange={(e) => setSizes(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Colors (comma separated)</label>
+              <input value={colors} onChange={(e) => setColors(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Barcode prefix (optional)</label>
+            <input value={barcodePrefix} onChange={(e) => setBarcodePrefix(e.target.value)} placeholder="e.g. TS-2024-001" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+          </div>
+          {error && <p className="text-red-600 text-sm">{error}</p>}
+          <button onClick={handleGenerate} disabled={generating} className="bg-primary-700 hover:bg-primary-800 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+            {generating ? 'Generating…' : 'Generate Variant Matrix'}
+          </button>
+
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">Existing variants ({variants.length})</h3>
+            <div className="max-h-64 overflow-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+              {variants.map((v) => {
+                const a = v.attributes ?? {};
+                return (
+                  <div key={v.id} className="flex justify-between items-center px-3 py-2 text-sm">
+                    <span className="text-gray-800">{[a.size, a.color].filter(Boolean).join(' / ')}</span>
+                    <span className="text-gray-400 font-mono text-xs">{v.barcode ?? '—'}</span>
+                    <span className="text-primary-700 font-medium">LKR {Number(v.price ?? product.price).toFixed(2)}</span>
+                  </div>
+                );
+              })}
+              {variants.length === 0 && <div className="px-3 py-4 text-center text-gray-400 text-sm">No variants yet — generate some above.</div>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function GenericProducts() {
@@ -182,6 +265,7 @@ export default function GenericProducts() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Product | null | 'new'>(null);
+  const [variantsProduct, setVariantsProduct] = useState<Product | null>(null);
 
   // Fetch pack once on mount
   useEffect(() => {
@@ -314,6 +398,9 @@ export default function GenericProducts() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
+                    {pack.enabledModules.includes('variants') && (
+                      <button onClick={() => setVariantsProduct(p)} className="text-purple-600 hover:text-purple-800 text-xs font-medium">Variants</button>
+                    )}
                     <button onClick={() => setEditing(p)} className="text-primary-600 hover:text-primary-800 text-xs font-medium">Edit</button>
                     <button onClick={() => handleDelete(p.id)} className="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
                   </div>
@@ -333,6 +420,10 @@ export default function GenericProducts() {
           </div>
         )}
       </div>
+
+      {variantsProduct && (
+        <VariantsModal product={variantsProduct} onClose={() => setVariantsProduct(null)} />
+      )}
     </div>
   );
 }

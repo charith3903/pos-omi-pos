@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { VerticalService } from '../vertical/vertical.service';
+import { PurchasingService } from '../purchasing/purchasing.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -12,7 +13,36 @@ export class CatalogService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly vertical: VerticalService,
+    private readonly purchasing: PurchasingService,
   ) {}
+
+  /**
+   * Annotates a product (and its variants) with `effectivePrice`: the
+   * oldest-remaining batch's selling price (FIFO) when one exists, else the
+   * product/variant's own `price`. Lets the till always show/charge the
+   * correct batch-wise price without the caller needing to know about GRN
+   * batches at all.
+   */
+  private async withEffectivePrice<T extends { id: string; price: any; variants?: { id: string; price: any }[] }>(
+    tenantId: string,
+    product: T,
+  ): Promise<T & { effectivePrice: number; variants?: (T['variants'] extends (infer V)[] ? V & { effectivePrice: number } : never)[] }> {
+    const [productBatchPrice, variantBatchPrices] = await Promise.all([
+      this.purchasing.getEffectivePrice(tenantId, product.id, null),
+      Promise.all(
+        (product.variants ?? []).map((v) => this.purchasing.getEffectivePrice(tenantId, product.id, v.id)),
+      ),
+    ]);
+
+    return {
+      ...product,
+      effectivePrice: productBatchPrice ?? Number(product.price),
+      variants: product.variants?.map((v, i) => ({
+        ...v,
+        effectivePrice: variantBatchPrices[i] ?? Number(v.price ?? product.price),
+      })) as any,
+    };
+  }
 
   // ─── Categories ──────────────────────────────────────────────────────────
 
@@ -49,7 +79,7 @@ export class CatalogService {
         ...(categoryId && { categoryId }),
       };
 
-      const [items, total] = await Promise.all([
+      const [rawItems, total] = await Promise.all([
         tx.product.findMany({
           where,
           skip: (page - 1) * limit,
@@ -60,6 +90,7 @@ export class CatalogService {
         tx.product.count({ where }),
       ]);
 
+      const items = await Promise.all(rawItems.map((p) => this.withEffectivePrice(tenantId, p)));
       return { items, total, page, limit };
     });
   }
@@ -72,18 +103,22 @@ export class CatalogService {
       }),
     );
     if (!product) throw new NotFoundException('Product not found');
-    return product;
+    return this.withEffectivePrice(tenantId, product);
   }
 
   async getProductByBarcode(tenantId: string, barcode: string) {
+    // Textile-style products are scanned by their variant's barcode (each
+    // size/color combo gets its own), not the parent product's — match both.
     const product = await this.prisma.withTenant(tenantId, (tx) =>
       tx.product.findFirst({
-        where: { barcode },
+        where: { OR: [{ barcode }, { variants: { some: { barcode } } }] },
         include: { category: { select: { id: true, name: true } }, variants: true },
       }),
     );
     if (!product) throw new NotFoundException('Product not found');
-    return product;
+    const withPrice = await this.withEffectivePrice(tenantId, product);
+    const matchedVariant = withPrice.variants?.find((v: any) => v.barcode === barcode);
+    return matchedVariant ? { ...withPrice, matchedVariantId: matchedVariant.id } : withPrice;
   }
 
   async createProduct(tenantId: string, dto: CreateProductDto) {

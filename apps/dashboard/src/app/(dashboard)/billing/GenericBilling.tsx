@@ -7,23 +7,40 @@ import { Receipt } from '@/components/Receipt';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface Variant {
+  id: string;
+  attributes: Record<string, string>;
+  price?: string | number | null;
+  effectivePrice?: number;
+  barcode?: string | null;
+  sku?: string | null;
+}
+
 interface Product {
   id: string;
   name: string;
   sku?: string;
   barcode?: string;
   price: string | number;
+  effectivePrice?: number;
   taxRate: string | number;
   trackStock: boolean;
   category?: { name: string } | null;
+  variants?: Variant[];
 }
 
 interface CartLine {
   productId: string;
+  variantId?: string;
   name: string;
   qty: number;
   unitPrice: number;
   taxRate: number;
+}
+
+function variantLabel(v: Variant): string {
+  const a = v.attributes ?? {};
+  return [a.size, a.color].filter(Boolean).join(' / ') || v.sku || v.id;
 }
 
 type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER';
@@ -45,7 +62,7 @@ function calcTotals(lines: CartLine[], cartDiscount: number) {
 
 // ─── Product search ───────────────────────────────────────────────────────────
 
-function ProductSearch({ onAdd }: { onAdd: (p: Product) => void }) {
+function ProductSearch({ onAdd }: { onAdd: (p: Product, matchedVariantId?: string) => void }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,7 +88,7 @@ function ProductSearch({ onAdd }: { onAdd: (p: Product) => void }) {
     if (!val) return;
     try {
       const p = await api.getProductByBarcode(val);
-      onAdd(p);
+      onAdd(p, p.matchedVariantId);
       setQuery('');
       setResults([]);
     } catch {
@@ -103,11 +120,42 @@ function ProductSearch({ onAdd }: { onAdd: (p: Product) => void }) {
                 <div className="font-medium text-sm text-gray-900">{p.name}</div>
                 <div className="text-xs text-gray-400">{p.sku ?? p.barcode ?? p.category?.name ?? ''}</div>
               </div>
-              <div className="text-primary-700 font-semibold text-sm">LKR {Number(p.price).toFixed(2)}</div>
+              <div className="text-primary-700 font-semibold text-sm">
+                LKR {Number(p.effectivePrice ?? p.price).toFixed(2)}{p.variants?.length ? ` · ${p.variants.length} variant${p.variants.length > 1 ? 's' : ''}` : ''}
+              </div>
             </button>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Variant picker ───────────────────────────────────────────────────────────
+
+function VariantPicker({ product, onPick, onClose }: { product: Product; onPick: (v: Variant) => void; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full max-h-[80vh] overflow-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <span className="font-semibold text-gray-900">{product.name} — choose variant</span>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">×</button>
+        </div>
+        <div className="p-4 grid grid-cols-2 gap-2">
+          {(product.variants ?? []).map((v) => (
+            <button
+              key={v.id}
+              onClick={() => onPick(v)}
+              className="border border-gray-300 rounded-xl px-3 py-3 text-left hover:border-primary-500 hover:bg-primary-50 transition-colors"
+            >
+              <div className="font-medium text-sm text-gray-900">{variantLabel(v)}</div>
+              <div className="text-xs text-primary-700 font-semibold mt-1">
+                LKR {Number(v.effectivePrice ?? v.price ?? product.price).toFixed(2)}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -123,6 +171,7 @@ export default function GenericBilling() {
   const [posting, setPosting] = useState(false);
   const [receipt, setReceipt] = useState<any>(null);
   const [error, setError] = useState('');
+  const [pickerProduct, setPickerProduct] = useState<Product | null>(null);
 
   const session = getSession();
   const { subtotal, discount, tax, total } = calcTotals(lines, cartDiscount);
@@ -131,20 +180,37 @@ export default function GenericBilling() {
 
   // ─── Cart manipulation ─────────────────────────────────────────────────
 
-  function addProduct(p: Product) {
+  function addLine(p: Product, variant?: Variant) {
     setLines((prev) => {
-      const existing = prev.findIndex((l) => l.productId === p.id);
+      const existing = prev.findIndex((l) => l.productId === p.id && l.variantId === variant?.id);
       if (existing >= 0) {
         return prev.map((l, i) => i === existing ? { ...l, qty: l.qty + 1 } : l);
       }
+      const unitPrice = variant
+        ? Number(variant.effectivePrice ?? variant.price ?? p.price)
+        : Number(p.effectivePrice ?? p.price);
       return [...prev, {
         productId: p.id,
-        name: p.name,
+        variantId: variant?.id,
+        name: variant ? `${p.name} (${variantLabel(variant)})` : p.name,
         qty: 1,
-        unitPrice: Number(p.price),
+        unitPrice,
         taxRate: Number(p.taxRate),
       }];
     });
+  }
+
+  // Products with variants need a size/color pick first — unless a barcode
+  // scan already matched a specific variant, in which case add it directly.
+  function handleProductAdd(p: Product, matchedVariantId?: string) {
+    if (matchedVariantId) {
+      const variant = p.variants?.find((v) => v.id === matchedVariantId);
+      addLine(p, variant);
+    } else if (p.variants && p.variants.length > 0) {
+      setPickerProduct(p);
+    } else {
+      addLine(p);
+    }
   }
 
   function updateQty(idx: number, delta: number) {
@@ -193,6 +259,7 @@ export default function GenericBilling() {
       total,
       items: lines.map((l) => ({
         productId: l.productId,
+        variantId: l.variantId,
         nameSnapshot: l.name,
         qty: l.qty,
         unitPrice: l.unitPrice,
@@ -218,7 +285,7 @@ export default function GenericBilling() {
       {/* ── Left: Product search + (optional) quick-access grid ── */}
       <div className="flex-1 p-6 border-r border-gray-200">
         <h1 className="text-xl font-bold text-gray-900 mb-4">New Sale</h1>
-        <ProductSearch onAdd={addProduct} />
+        <ProductSearch onAdd={handleProductAdd} />
 
         {lines.length === 0 && (
           <div className="mt-16 text-center text-gray-300 select-none">
@@ -358,6 +425,15 @@ export default function GenericBilling() {
           )}
         </div>
       </div>
+
+      {/* Variant picker (size/color) */}
+      {pickerProduct && (
+        <VariantPicker
+          product={pickerProduct}
+          onPick={(v) => { addLine(pickerProduct, v); setPickerProduct(null); }}
+          onClose={() => setPickerProduct(null)}
+        />
+      )}
 
       {/* Receipt modal */}
       {receipt && (

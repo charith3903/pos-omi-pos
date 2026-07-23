@@ -238,6 +238,28 @@ export const api = {
   getGrns: () => request<any[]>('/purchasing/grn'),
   createGrn: (data: any) =>
     request<any>('/purchasing/grn', { method: 'POST', body: JSON.stringify(data) }),
+  getBatches: (params?: { productId?: string; variantId?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.productId) q.set('productId', params.productId);
+    if (params?.variantId) q.set('variantId', params.variantId);
+    return request<any[]>(`/purchasing/batches?${q}`);
+  },
+
+  // ─── Textile variants ────────────────────────────────────────────────────
+  generateVariants: (data: { productId: string; sizes: string[]; colors: string[]; barcodePrefix?: string }) =>
+    request<any[]>('/textile/generate-variants', { method: 'POST', body: JSON.stringify(data) }),
+  listVariants: (productId: string) =>
+    request<{ variants: any[]; matrix: { sizes: string[]; colors: string[] } }>(
+      `/textile/variants/${encodeURIComponent(productId)}`,
+    ),
+
+  // ─── Notifications (WhatsApp / SMS) ──────────────────────────────────────
+  getNotificationSettings: () => request<any>('/notifications/settings'),
+  updateNotificationSettings: (data: any) =>
+    request<any>('/notifications/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  sendNotification: (data: { channel: 'WHATSAPP' | 'SMS'; to: string; body: string; relatedInvoiceId?: string }) =>
+    request<any>('/notifications/send', { method: 'POST', body: JSON.stringify(data) }),
+  getMessageLogs: (page = 1) => request<{ items: any[]; total: number }>(`/notifications/logs?page=${page}`),
 
   // ─── Refunds ─────────────────────────────────────────────────────────────
   processRefund: (data: any) =>

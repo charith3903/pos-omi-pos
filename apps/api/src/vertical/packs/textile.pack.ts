@@ -70,7 +70,7 @@ export const TEXTILE_PACK: VerticalPack = {
     },
   ],
 
-  enabledModules: ['catalog', 'invoices', 'stock', 'variants'],
+  enabledModules: ['catalog', 'invoices', 'stock', 'variants', 'purchasing', 'notifications'],
   defaultTaxRate: 0,
   receiptTemplate: 'standard',
   searchFilterKeys: ['style_code'],
