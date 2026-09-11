@@ -22,6 +22,11 @@ export class SyncItemLineDto {
   @IsString()
   productId: string;
 
+  /** Set when the cashier picked a specific size/color variant at checkout. */
+  @IsString()
+  @IsOptional()
+  variantId?: string;
+
   @IsString()
   nameSnapshot: string;
 
@@ -45,8 +50,7 @@ export class SyncItemLineDto {
   /**
    * Vertical-specific metadata attached by the client at billing time.
    *
-   * MOBILE:  { imei: string, serial?: string, warrantyMonths?: number }
-   * TEXTILE: { variantId?: string, size?: string, color?: string }
+   * MOBILE: { imei: string, serial?: string, warrantyMonths?: number }
    */
   @IsOptional()
   @IsObject()

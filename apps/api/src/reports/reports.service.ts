@@ -198,6 +198,55 @@ export class ReportsService {
     });
   }
 
+  /** Sales broken down by size/color variant — textile-vertical report. */
+  async getVariantPerformance(
+    tenantId: string,
+    from: string,
+    to: string,
+    metric: 'revenue' | 'qty' | 'profit' = 'revenue',
+    limit = 20,
+  ) {
+    const key = `rpt:${tenantId}:variants:top:${from}:${to}:${metric}:${limit}`;
+    return this.cached(key, async () => {
+      return this.prisma.withTenant(tenantId, async (tx) => {
+        const data = await tx.variantSalesSummary.groupBy({
+          by: ['variantId', 'productId'],
+          where: { date: { gte: new Date(from), lte: new Date(to) } },
+          _sum: { qtySold: true, revenue: true, profit: true },
+          orderBy: { _sum: { [metric === 'qty' ? 'qtySold' : metric]: 'desc' } },
+          take: limit,
+        });
+
+        const variantIds = data.map((d) => d.variantId);
+        const productIds = [...new Set(data.map((d) => d.productId))];
+        const [variants, products] = await Promise.all([
+          tx.productVariant.findMany({
+            where: { id: { in: variantIds } },
+            select: { id: true, attributes: true, barcode: true, sku: true },
+          }),
+          tx.product.findMany({
+            where: { id: { in: productIds } },
+            select: { id: true, name: true, sku: true },
+          }),
+        ]);
+        const variantMap = Object.fromEntries(variants.map((v) => [v.id, v]));
+        const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+
+        return data.map((d) => ({
+          variantId: d.variantId,
+          productId: d.productId,
+          productName: productMap[d.productId]?.name ?? 'Unknown',
+          attributes: variantMap[d.variantId]?.attributes ?? {},
+          barcode: variantMap[d.variantId]?.barcode ?? null,
+          sku: variantMap[d.variantId]?.sku ?? productMap[d.productId]?.sku ?? '',
+          qtySold: Number(d._sum.qtySold ?? 0),
+          revenue: Number(d._sum.revenue ?? 0),
+          profit: Number(d._sum.profit ?? 0),
+        }));
+      });
+    });
+  }
+
   async getSlowMovers(tenantId: string, days = 30, limit = 20) {
     const key = `rpt:${tenantId}:products:slow:${days}:${limit}`;
     return this.cached(key, () =>
@@ -286,51 +335,121 @@ export class ReportsService {
     const key = `rpt:${tenantId}:stock:alerts`;
     return this.cached(key, () =>
       this.prisma.withTenant(tenantId, async (tx) => {
-        // Low stock: current stock <= threshold (from attributes.min_stock_alert or 5)
+        // Low stock: current stock <= threshold (from attributes.min_stock_alert or 5).
+        // Two branches UNION'd together: plain products (unchanged from before), and
+        // one row per variant for variant-tracked (textile) products — a variant's own
+        // threshold if set, else falls back to the parent product's, else 5. Plain
+        // products with variants are excluded from the first branch so they don't
+        // also show up as one blended row.
         const lowStock = await tx.$queryRaw<
-          { productId: string; productName: string; sku: string | null; currentStock: string; threshold: string }[]
+          {
+            productId: string;
+            variantId: string | null;
+            productName: string;
+            variantLabel: string | null;
+            sku: string | null;
+            currentStock: string;
+            threshold: string;
+          }[]
         >`
-          SELECT
-            p.id   AS "productId",
-            p.name AS "productName",
-            p.sku  AS "sku",
-            COALESCE(SUM(sm.qty_delta), 0)::text AS "currentStock",
-            COALESCE((p.attributes->>'min_stock_alert')::numeric, 5)::text AS "threshold"
-          FROM products p
-          LEFT JOIN stock_movements sm ON sm.product_id = p.id
-          WHERE p.track_stock = true
-          GROUP BY p.id, p.name, p.sku, p.attributes
-          HAVING COALESCE(SUM(sm.qty_delta), 0)
-            <= COALESCE((p.attributes->>'min_stock_alert')::numeric, 5)
-            AND COALESCE(SUM(sm.qty_delta), 0) >= 0
-          ORDER BY COALESCE(SUM(sm.qty_delta), 0) ASC
+          SELECT "productId", "variantId", "productName", "variantLabel", "sku",
+                 stock_num::text AS "currentStock", threshold_num::text AS "threshold"
+          FROM (
+            SELECT
+              p.id AS "productId", NULL::text AS "variantId", p.name AS "productName",
+              NULL::text AS "variantLabel", p.sku AS "sku",
+              COALESCE(SUM(sm.qty_delta), 0) AS stock_num,
+              COALESCE((p.attributes->>'min_stock_alert')::numeric, 5) AS threshold_num
+            FROM products p
+            LEFT JOIN stock_movements sm ON sm.product_id = p.id
+            WHERE p.track_stock = true
+              AND NOT EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id)
+            GROUP BY p.id, p.name, p.sku, p.attributes
+            HAVING COALESCE(SUM(sm.qty_delta), 0) <= COALESCE((p.attributes->>'min_stock_alert')::numeric, 5)
+              AND COALESCE(SUM(sm.qty_delta), 0) >= 0
+
+            UNION ALL
+
+            SELECT
+              p.id AS "productId", v.id AS "variantId", p.name AS "productName",
+              NULLIF(CONCAT_WS(' / ', v.attributes->>'size', v.attributes->>'color'), '') AS "variantLabel",
+              p.sku AS "sku",
+              COALESCE(SUM(sm.qty_delta), 0) AS stock_num,
+              COALESCE(
+                (v.attributes->>'min_stock_alert')::numeric,
+                (p.attributes->>'min_stock_alert')::numeric,
+                5
+              ) AS threshold_num
+            FROM product_variants v
+            JOIN products p ON p.id = v.product_id
+            LEFT JOIN stock_movements sm ON sm.variant_id = v.id
+            WHERE p.track_stock = true
+            GROUP BY p.id, v.id, p.name, p.sku, p.attributes, v.attributes
+            HAVING COALESCE(SUM(sm.qty_delta), 0) <= COALESCE(
+                (v.attributes->>'min_stock_alert')::numeric,
+                (p.attributes->>'min_stock_alert')::numeric,
+                5
+              )
+              AND COALESCE(SUM(sm.qty_delta), 0) >= 0
+          ) alerts
+          ORDER BY stock_num ASC
           LIMIT 50
         `;
 
-        // Dead stock: stock > 0, no sales in 60 days
+        // Dead stock: stock > 0, no sales in 60 days. Same two-branch shape —
+        // products excluded via ProductSalesSummary, variants via VariantSalesSummary.
         const deadCutoff = new Date();
         deadCutoff.setDate(deadCutoff.getDate() - 60);
-        const recentSellers = (await tx.productSalesSummary.findMany({
-          where: { date: { gte: deadCutoff } },
-          select: { productId: true },
-          distinct: ['productId'],
-        })).map((r) => r.productId);
+        const [recentSellers, recentVariantSellers] = await Promise.all([
+          tx.productSalesSummary
+            .findMany({ where: { date: { gte: deadCutoff } }, select: { productId: true }, distinct: ['productId'] })
+            .then((rows) => rows.map((r) => r.productId)),
+          tx.variantSalesSummary
+            .findMany({ where: { date: { gte: deadCutoff } }, select: { variantId: true }, distinct: ['variantId'] })
+            .then((rows) => rows.map((r) => r.variantId)),
+        ]);
 
         const deadStock = await tx.$queryRaw<
-          { productId: string; productName: string; sku: string | null; currentStock: string }[]
+          {
+            productId: string;
+            variantId: string | null;
+            productName: string;
+            variantLabel: string | null;
+            sku: string | null;
+            currentStock: string;
+          }[]
         >`
-          SELECT
-            p.id   AS "productId",
-            p.name AS "productName",
-            p.sku  AS "sku",
-            COALESCE(SUM(sm.qty_delta), 0)::text AS "currentStock"
-          FROM products p
-          LEFT JOIN stock_movements sm ON sm.product_id = p.id
-          WHERE p.track_stock = true
-            AND p.id != ALL(${recentSellers})
-          GROUP BY p.id, p.name, p.sku
-          HAVING COALESCE(SUM(sm.qty_delta), 0) > 0
-          ORDER BY COALESCE(SUM(sm.qty_delta), 0) DESC
+          SELECT "productId", "variantId", "productName", "variantLabel", "sku",
+                 stock_num::text AS "currentStock"
+          FROM (
+            SELECT
+              p.id AS "productId", NULL::text AS "variantId", p.name AS "productName",
+              NULL::text AS "variantLabel", p.sku AS "sku",
+              COALESCE(SUM(sm.qty_delta), 0) AS stock_num
+            FROM products p
+            LEFT JOIN stock_movements sm ON sm.product_id = p.id
+            WHERE p.track_stock = true
+              AND NOT EXISTS (SELECT 1 FROM product_variants pv WHERE pv.product_id = p.id)
+              AND p.id != ALL(${recentSellers})
+            GROUP BY p.id, p.name, p.sku
+            HAVING COALESCE(SUM(sm.qty_delta), 0) > 0
+
+            UNION ALL
+
+            SELECT
+              p.id AS "productId", v.id AS "variantId", p.name AS "productName",
+              NULLIF(CONCAT_WS(' / ', v.attributes->>'size', v.attributes->>'color'), '') AS "variantLabel",
+              p.sku AS "sku",
+              COALESCE(SUM(sm.qty_delta), 0) AS stock_num
+            FROM product_variants v
+            JOIN products p ON p.id = v.product_id
+            LEFT JOIN stock_movements sm ON sm.variant_id = v.id
+            WHERE p.track_stock = true
+              AND v.id != ALL(${recentVariantSellers})
+            GROUP BY p.id, v.id, p.name, p.sku, v.attributes
+            HAVING COALESCE(SUM(sm.qty_delta), 0) > 0
+          ) dead
+          ORDER BY stock_num DESC
           LIMIT 50
         `;
 

@@ -72,7 +72,10 @@ export const RESTAURANT_PACK: VerticalPack = {
     },
   ],
 
-  enabledModules: ['catalog', 'invoices', 'kitchen', 'tables'],
+  // 'purchasing' is sold separately as a paid add-on for restaurants (see
+  // prisma/seed.ts's ADDON_ONLY_MODULES) — listed here so SubscriptionGuard's
+  // vertical-ceiling check allows a restaurant tenant to buy it at all.
+  enabledModules: ['catalog', 'invoices', 'kitchen', 'tables', 'purchasing'],
   defaultTaxRate: 0,
   receiptTemplate: 'restaurant',
   searchFilterKeys: [],

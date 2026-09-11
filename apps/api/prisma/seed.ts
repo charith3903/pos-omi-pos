@@ -34,6 +34,32 @@ const DEMO_SHOPS: DemoShop[] = [
 const DEMO_EMAIL = 'admin@demo.com';
 const DEMO_PASSWORD = 'admin123';
 
+// Modules a business type's pack allows (so they're purchasable) but which
+// are NOT bundled free into that business type's base Plan — i.e. real paid
+// add-ons, demonstrating the AddOnModule/SubscriptionAddOn purchase flow
+// end-to-end. Every other pack module stays free, as before.
+const ADDON_ONLY_MODULES: Partial<Record<BusinessType, string[]>> = {
+  RESTAURANT: ['purchasing'],
+};
+
+const ADDON_CATALOG: {
+  moduleKey: string;
+  name: string;
+  description: string;
+  priceUsdMonthly: number;
+  priceLkrMonthly: number;
+  applicableBusinessTypes: BusinessType[];
+}[] = [
+  {
+    moduleKey: 'purchasing',
+    name: 'Purchasing & Stock Orders',
+    description: 'Create purchase orders and record supplier deliveries (GRNs) with batch/FIFO costing.',
+    priceUsdMonthly: 9.99,
+    priceLkrMonthly: 3000,
+    applicableBusinessTypes: ['RESTAURANT'],
+  },
+];
+
 // Seed always uses the superuser connection so it can bypass RLS
 // (the app itself uses omnipos_app which enforces RLS)
 const SEED_DB_URL = process.env.SEED_DATABASE_URL
@@ -43,10 +69,12 @@ const prisma = new PrismaClient({ datasources: { db: { url: SEED_DB_URL } } });
 
 async function seedShop(shop: DemoShop) {
   const pack = getPackForBusinessType(shop.businessType);
+  const addonOnly = ADDON_ONLY_MODULES[shop.businessType] ?? [];
+  const includedModules = pack.enabledModules.filter((m) => !addonOnly.includes(m));
 
   const plan = await prisma.plan.upsert({
     where: { businessType: shop.businessType },
-    update: { includedModules: pack.enabledModules },
+    update: { includedModules },
     create: {
       businessType: shop.businessType,
       name: `${shop.businessType.replace('_', ' ')} Plan`,
@@ -55,7 +83,7 @@ async function seedShop(shop: DemoShop) {
       priceLkrMonthly: 4990,
       priceLkrAnnual: 49900,
       trialDays: 14,
-      includedModules: pack.enabledModules,
+      includedModules,
     },
   });
 
@@ -119,12 +147,39 @@ async function seedShop(shop: DemoShop) {
   console.log(`✅  ${shop.businessType.padEnd(11)} → subdomain: ${shop.subdomain}`);
 }
 
+async function seedAddOnCatalog() {
+  for (const addOn of ADDON_CATALOG) {
+    await prisma.addOnModule.upsert({
+      where: { moduleKey: addOn.moduleKey },
+      update: {
+        name: addOn.name,
+        description: addOn.description,
+        priceUsdMonthly: addOn.priceUsdMonthly,
+        priceLkrMonthly: addOn.priceLkrMonthly,
+        applicableBusinessTypes: addOn.applicableBusinessTypes,
+        isActive: true,
+      },
+      create: {
+        moduleKey: addOn.moduleKey,
+        name: addOn.name,
+        description: addOn.description,
+        priceUsdMonthly: addOn.priceUsdMonthly,
+        priceLkrMonthly: addOn.priceLkrMonthly,
+        applicableBusinessTypes: addOn.applicableBusinessTypes,
+      },
+    });
+    console.log(`✅  add-on module → ${addOn.moduleKey}`);
+  }
+}
+
 async function main() {
   console.log('🌱  Seeding demo data for every shop type…\n');
 
   for (const shop of DEMO_SHOPS) {
     await seedShop(shop);
   }
+
+  await seedAddOnCatalog();
 
   console.log('\n🎉  Done! Login credentials (same email/password across all shops):\n');
   console.log(`    Email    : ${DEMO_EMAIL}`);

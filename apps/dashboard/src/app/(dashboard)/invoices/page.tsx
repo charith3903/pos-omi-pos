@@ -2,14 +2,130 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { FileText, ChevronLeft, ChevronRight, Loader2, X, Package } from 'lucide-react';
+import { useVerticalPack } from '@/hooks/useVerticalPack';
+import { FileText, ChevronLeft, ChevronRight, Loader2, X, Package, Repeat } from 'lucide-react';
+
+function ExchangeDialog({
+  item,
+  onClose,
+  onDone,
+}: {
+  item: any;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [variants, setVariants] = useState<any[]>([]);
+  const [toVariantId, setToVariantId] = useState('');
+  const [qty, setQty] = useState(Number(item.qty));
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<{ priceDifference: number } | null>(null);
+
+  useEffect(() => {
+    api
+      .listVariants(item.productId)
+      .then((res) => setVariants(res.variants.filter((v: any) => v.id !== item.variantId)))
+      .catch(() => setError('Could not load variants.'))
+      .finally(() => setLoading(false));
+  }, [item.productId, item.variantId]);
+
+  async function handleExchange() {
+    if (!toVariantId) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.exchangeVariant({ invoiceItemId: item.id, toVariantId, qty });
+      setResult({ priceDifference: res.priceDifference });
+    } catch (err: any) {
+      setError(err.message ?? 'Exchange failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <h2 className="font-bold text-gray-900 flex items-center gap-2"><Repeat className="w-4 h-4" /> Exchange</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-gray-500">{item.nameSnapshot}</p>
+
+          {result ? (
+            <div className="space-y-3">
+              <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-xl text-sm">
+                Exchange complete.
+              </div>
+              <div className="text-sm">
+                {result.priceDifference > 0 && (
+                  <p>Collect <strong>Rs {result.priceDifference.toLocaleString()}</strong> from the customer.</p>
+                )}
+                {result.priceDifference < 0 && (
+                  <p>Refund <strong>Rs {Math.abs(result.priceDifference).toLocaleString()}</strong> to the customer.</p>
+                )}
+                {result.priceDifference === 0 && <p>No price difference to settle.</p>}
+              </div>
+              <button onClick={onDone} className="w-full bg-primary-700 hover:bg-primary-800 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                Done
+              </button>
+            </div>
+          ) : loading ? (
+            <div className="flex items-center gap-2 text-gray-400 text-sm"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Exchange for</label>
+                <select
+                  value={toVariantId}
+                  onChange={(e) => setToVariantId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">Select a variant…</option>
+                  {variants.map((v: any) => (
+                    <option key={v.id} value={v.id}>
+                      {Object.values(v.attributes ?? {}).filter(Boolean).join(' / ')} — Rs {Number(v.price ?? item.unitPrice).toLocaleString()}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Quantity</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={Number(item.qty)}
+                  value={qty}
+                  onChange={(e) => setQty(Number(e.target.value))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              {error && <p className="text-sm text-red-600">{error}</p>}
+              <button
+                onClick={handleExchange}
+                disabled={busy || !toVariantId}
+                className="w-full bg-primary-700 hover:bg-primary-800 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+              >
+                {busy ? 'Processing…' : 'Confirm Exchange'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function InvoicesPage() {
+  const { pack } = useVerticalPack();
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{ items: any[]; total: number; limit: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [exchangeItem, setExchangeItem] = useState<any | null>(null);
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
@@ -140,7 +256,17 @@ export default function InvoicesPage() {
                             <div className="text-xs text-gray-500">× {Number(item.qty)} @ Rs {Number(item.unitPrice).toLocaleString()}</div>
                           </div>
                         </div>
-                        <div className="font-semibold text-gray-900">Rs {Number(item.lineTotal).toLocaleString()}</div>
+                        <div className="flex items-center gap-3">
+                          {item.variantId && pack.enabledModules.includes('variants') && (
+                            <button
+                              onClick={() => setExchangeItem(item)}
+                              className="text-xs text-purple-600 hover:text-purple-800 font-medium flex items-center gap-1"
+                            >
+                              <Repeat className="w-3 h-3" /> Exchange
+                            </button>
+                          )}
+                          <div className="font-semibold text-gray-900">Rs {Number(item.lineTotal).toLocaleString()}</div>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -168,6 +294,17 @@ export default function InvoicesPage() {
             )}
           </div>
         </div>
+      )}
+
+      {exchangeItem && (
+        <ExchangeDialog
+          item={exchangeItem}
+          onClose={() => setExchangeItem(null)}
+          onDone={() => {
+            setExchangeItem(null);
+            if (selected) viewInvoice(selected.id);
+          }}
+        />
       )}
     </div>
   );

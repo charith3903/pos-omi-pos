@@ -48,12 +48,14 @@ export class CatalogController {
     @CurrentUser() u: RequestUser,
     @Query('search') search?: string,
     @Query('categoryId') categoryId?: string,
+    @Query('season') season?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     return this.catalog.listProducts(u.tenantId, {
       search,
       categoryId,
+      season,
       page: page ? parseInt(page) : undefined,
       limit: limit ? parseInt(limit) : undefined,
     });

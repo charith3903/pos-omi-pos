@@ -13,6 +13,8 @@ const _uuid = Uuid();
 
 class CartLine {
   final String productId;
+  final String? variantId;
+  final String? variantLabel;
   final String name;
   int qty;
   final double unitPrice;
@@ -22,6 +24,8 @@ class CartLine {
 
   CartLine({
     required this.productId,
+    this.variantId,
+    this.variantLabel,
     required this.name,
     required this.qty,
     required this.unitPrice,
@@ -67,17 +71,20 @@ class _BillingScreenState extends State<BillingScreen> {
   double get _cashGiven => double.tryParse(_cashController.text) ?? 0;
   double get _change => (_cashGiven - _total).clamp(0, double.infinity);
 
-  void _addProduct(ProductData p) {
+  void _addProduct(ProductData p, [ProductVariantData? variant]) {
     setState(() {
-      final idx = _cart.indexWhere((l) => l.productId == p.id);
+      final key = variant?.id ?? p.id;
+      final idx = _cart.indexWhere((l) => (l.variantId ?? l.productId) == key);
       if (idx >= 0) {
         _cart[idx].qty++;
       } else {
         _cart.add(CartLine(
           productId: p.id,
+          variantId: variant?.id,
+          variantLabel: variant?.label,
           name: p.name,
           qty: 1,
-          unitPrice: p.price,
+          unitPrice: variant?.price ?? p.price,
           taxRate: p.taxRate,
           attributes: p.attributes,
         ));
@@ -139,6 +146,7 @@ class _BillingScreenState extends State<BillingScreen> {
       final moveInputs = _cart
           .map((l) => StockMovementInput(
                 productId: l.productId,
+                variantId: l.variantId,
                 qtyDelta: -l.qty.toDouble(),
                 refId: id,
               ))
@@ -156,6 +164,7 @@ class _BillingScreenState extends State<BillingScreen> {
         'items': _cart
             .map((l) => {
                   'productId': l.productId,
+                  if (l.variantId != null) 'variantId': l.variantId,
                   'nameSnapshot': _buildNameSnapshot(l, pack.searchFilterKeys),
                   'qty': l.qty,
                   'unitPrice': l.unitPrice,
@@ -192,7 +201,7 @@ class _BillingScreenState extends State<BillingScreen> {
           'createdAt': now.toIso8601String(),
           'items': _cart
               .map((l) => {
-                    'name': l.name,
+                    'name': l.variantLabel != null ? '${l.name} (${l.variantLabel})' : l.name,
                     'qty': l.qty,
                     'unitPrice': l.unitPrice,
                     'lineTotal': l.lineTotal,
@@ -217,14 +226,17 @@ class _BillingScreenState extends State<BillingScreen> {
     }
   }
 
-  /// Appends searchable attribute values to the name for receipt / nameSnapshot.
-  /// e.g. "Brake Pad  [P/N: BP-1234 | OEM: 12345]"
+  /// Appends the variant label (e.g. "M / Red") and searchable attribute
+  /// values to the name for receipt / nameSnapshot, e.g.
+  /// "Brake Pad  [P/N: BP-1234 | OEM: 12345]" or "T-Shirt  [M / Red]".
   String _buildNameSnapshot(CartLine l, List<String> filterKeys) {
-    final parts = filterKeys
-        .map((k) => l.attributes[k])
-        .where((v) => v != null && '$v'.isNotEmpty)
-        .map((v) => '$v')
-        .toList();
+    final parts = [
+      if (l.variantLabel != null && l.variantLabel!.isNotEmpty) l.variantLabel!,
+      ...filterKeys
+          .map((k) => l.attributes[k])
+          .where((v) => v != null && '$v'.isNotEmpty)
+          .map((v) => '$v'),
+    ];
     if (parts.isEmpty) return l.name;
     return '${l.name}  [${parts.join(' | ')}]';
   }
@@ -309,7 +321,7 @@ class _BillingScreenState extends State<BillingScreen> {
 class _ProductSearch extends StatefulWidget {
   final AppDatabase db;
   final VerticalService vertical;
-  final ValueChanged<ProductData> onProductSelected;
+  final void Function(ProductData product, ProductVariantData? variant) onProductSelected;
 
   const _ProductSearch({
     required this.db,
@@ -342,13 +354,51 @@ class _ProductSearchState extends State<_ProductSearch> {
     });
   }
 
+  /// Scanning/typing a variant's own barcode goes straight to cart, skipping
+  /// the picker — the app's existing hardware-scanner-into-text-field
+  /// convention, extended to variants.
   Future<void> _onSubmit(String q) async {
-    final p = await widget.db.findByBarcode(q.trim());
+    final trimmed = q.trim();
+    final variant = await widget.db.findVariantByBarcode(trimmed);
+    if (variant != null) {
+      final product = await widget.db.getProductById(variant.productId);
+      if (product != null) {
+        widget.onProductSelected(product, variant);
+        _ctrl.clear();
+        setState(() => _results = []);
+        return;
+      }
+    }
+    final p = await widget.db.findByBarcode(trimmed);
     if (p != null) {
-      widget.onProductSelected(p);
+      widget.onProductSelected(p, null);
       _ctrl.clear();
       setState(() => _results = []);
     }
+  }
+
+  /// Tapping a search result: if it has variants and the tenant's pack
+  /// enables the module, show a picker instead of adding the base product.
+  Future<void> _selectProduct(ProductData p) async {
+    if (widget.vertical.pack.enabledModules.contains('variants')) {
+      final variants = await widget.db.variantsForProduct(p.id);
+      if (!mounted) return;
+      if (variants.isNotEmpty) {
+        final chosen = await showModalBottomSheet<ProductVariantData>(
+          context: context,
+          isScrollControlled: true,
+          builder: (ctx) => _VariantPickerSheet(product: p, variants: variants),
+        );
+        if (chosen == null) return; // cancelled — leave search results as-is
+        widget.onProductSelected(p, chosen);
+        _ctrl.clear();
+        setState(() => _results = []);
+        return;
+      }
+    }
+    widget.onProductSelected(p, null);
+    _ctrl.clear();
+    setState(() => _results = []);
   }
 
   @override
@@ -405,11 +455,7 @@ class _ProductSearchState extends State<_ProductSearch> {
                     style: const TextStyle(
                         color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold),
                   ),
-                  onTap: () {
-                    widget.onProductSelected(p);
-                    _ctrl.clear();
-                    setState(() => _results = []);
-                  },
+                  onTap: () => _selectProduct(p),
                 );
               },
             ),
@@ -423,6 +469,62 @@ class _ProductSearchState extends State<_ProductSearch> {
     _ctrl.dispose();
     _debounce?.cancel();
     super.dispose();
+  }
+}
+
+// ─── Variant Picker ─────────────────────────────────────────────────────────
+
+/// Bottom sheet of variant chips (grid-like via Wrap) with stock counts.
+/// Generic over however many attribute keys a variant has — not hardcoded
+/// to exactly size+color.
+class _VariantPickerSheet extends StatelessWidget {
+  final ProductData product;
+  final List<ProductVariantData> variants;
+
+  const _VariantPickerSheet({required this.product, required this.variants});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(product.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 4),
+            const Text('Choose a variant', style: TextStyle(color: Colors.grey, fontSize: 12)),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: variants.map((v) {
+                final outOfStock = product.trackStock && v.stockQty <= 0;
+                return ActionChip(
+                  label: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(v.label.isEmpty ? '—' : v.label,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        outOfStock ? 'Out of stock' : '${v.stockQty.toStringAsFixed(0)} in stock',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: outOfStock ? Colors.red : Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  backgroundColor: outOfStock ? Colors.grey.shade100 : const Color(0xFFEFF6FF),
+                  onPressed: outOfStock ? null : () => Navigator.pop(context, v),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -500,7 +602,7 @@ class _CartPanel extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis),
                         subtitle: Text(
-                          attrHint ?? 'LKR ${l.unitPrice.toStringAsFixed(2)} each',
+                          l.variantLabel ?? attrHint ?? 'LKR ${l.unitPrice.toStringAsFixed(2)} each',
                           style: const TextStyle(fontSize: 11),
                         ),
                         trailing: Row(

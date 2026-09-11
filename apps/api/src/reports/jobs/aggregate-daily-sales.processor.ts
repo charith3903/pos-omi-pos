@@ -44,7 +44,7 @@ export class AggregateDailySalesProcessor extends WorkerHost {
           FROM invoices i
           JOIN invoice_items ii ON ii.invoice_id = i.id
           LEFT JOIN products p  ON p.id = ii.product_id
-          WHERE i.status = 'PAID'
+          WHERE i.status IN ('PAID', 'PARTIAL_REFUND', 'REFUNDED')
             AND DATE(i.created_at AT TIME ZONE 'UTC') = ${date}::date
           GROUP BY i.tenant_id, i.outlet_id, DATE(i.created_at AT TIME ZONE 'UTC')
           ON CONFLICT (tenant_id, outlet_id, date) DO UPDATE SET
@@ -72,10 +72,38 @@ export class AggregateDailySalesProcessor extends WorkerHost {
           FROM invoice_items ii
           JOIN invoices i    ON i.id = ii.invoice_id
           LEFT JOIN products p ON p.id = ii.product_id
-          WHERE i.status = 'PAID'
+          WHERE i.status IN ('PAID', 'PARTIAL_REFUND', 'REFUNDED')
             AND DATE(i.created_at AT TIME ZONE 'UTC') = ${date}::date
           GROUP BY ii.tenant_id, ii.product_id, DATE(i.created_at AT TIME ZONE 'UTC')
           ON CONFLICT (tenant_id, product_id, date) DO UPDATE SET
+            qty_sold   = EXCLUDED.qty_sold,
+            revenue    = EXCLUDED.revenue,
+            profit     = EXCLUDED.profit,
+            updated_at = NOW()
+        `;
+
+        // ── Variant sales summary (textile size/color breakdown) ───────────
+        await tx.$executeRaw`
+          INSERT INTO variant_sales_summaries
+            (id, tenant_id, product_id, variant_id, date, qty_sold, revenue, profit, created_at, updated_at)
+          SELECT
+            gen_random_uuid()::text,
+            ii.tenant_id,
+            ii.product_id,
+            ii.variant_id,
+            DATE(i.created_at AT TIME ZONE 'UTC'),
+            COALESCE(SUM(ii.qty),       0)::numeric(12,3),
+            COALESCE(SUM(ii.line_total),0)::numeric(14,2),
+            COALESCE(SUM(ii.line_total - ii.qty * COALESCE(p.cost, 0)), 0)::numeric(14,2),
+            NOW(), NOW()
+          FROM invoice_items ii
+          JOIN invoices i    ON i.id = ii.invoice_id
+          LEFT JOIN products p ON p.id = ii.product_id
+          WHERE i.status IN ('PAID', 'PARTIAL_REFUND', 'REFUNDED')
+            AND ii.variant_id IS NOT NULL
+            AND DATE(i.created_at AT TIME ZONE 'UTC') = ${date}::date
+          GROUP BY ii.tenant_id, ii.product_id, ii.variant_id, DATE(i.created_at AT TIME ZONE 'UTC')
+          ON CONFLICT (tenant_id, variant_id, date) DO UPDATE SET
             qty_sold   = EXCLUDED.qty_sold,
             revenue    = EXCLUDED.revenue,
             profit     = EXCLUDED.profit,

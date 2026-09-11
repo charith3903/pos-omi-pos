@@ -38,6 +38,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 /** Exported alias used by vertical.ts */
 export const apiFetch = request;
 
+/**
+ * Multipart file upload — deliberately does NOT set Content-Type so the
+ * browser can generate the correct multipart boundary itself; `request()`
+ * always forces `application/json`, which would break a FormData body.
+ */
+async function uploadFile<T>(path: string, formData: FormData): Promise<T> {
+  const token = getAccessToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: formData,
+  });
+
+  if (res.status === 401) {
+    clearSession();
+    window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.message ?? `HTTP ${res.status}`);
+  return body as T;
+}
+
 export const api = {
   // ─── Auth ────────────────────────────────────────────────────────────────
   registerTenant: (data: {
@@ -74,12 +98,14 @@ export const api = {
   getProducts: (params?: {
     search?: string;
     categoryId?: string;
+    season?: string;
     page?: number;
     limit?: number;
   }) => {
     const q = new URLSearchParams();
     if (params?.search)     q.set('search', params.search);
     if (params?.categoryId) q.set('categoryId', params.categoryId);
+    if (params?.season)     q.set('season', params.season);
     if (params?.page)       q.set('page', String(params.page));
     if (params?.limit)      q.set('limit', String(params.limit));
     return request<{ items: any[]; total: number; page: number; limit: number }>(
@@ -252,6 +278,22 @@ export const api = {
     request<{ variants: any[]; matrix: { sizes: string[]; colors: string[] } }>(
       `/textile/variants/${encodeURIComponent(productId)}`,
     ),
+  importVariantsCsv: (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return uploadFile<{ created: number; updated: number; errors: { row: number; sku: string; reason: string }[] }>(
+      '/textile/variants/import',
+      formData,
+    );
+  },
+  exchangeVariant: (data: { invoiceItemId: string; toVariantId: string; qty: number }) =>
+    request<{
+      exchangeId: string;
+      from: { variantId: string; qty: number };
+      to: { variantId: string; qty: number };
+      priceDifference: number;
+      invoiceItem: any;
+    }>('/textile/exchange', { method: 'POST', body: JSON.stringify(data) }),
 
   // ─── Notifications (WhatsApp / SMS) ──────────────────────────────────────
   getNotificationSettings: () => request<any>('/notifications/settings'),
@@ -288,4 +330,14 @@ export const api = {
     }),
   cancelSubscription: () =>
     request<{ cancelled: boolean }>('/billing/subscription/cancel', { method: 'POST' }),
+
+  // ─── Add-ons Store ───────────────────────────────────────────────────────
+  getAddOns: () => request<any[]>('/billing/addons'),
+  purchaseAddOn: (addOnModuleId: string, data: { gateway: 'STRIPE' | 'PAYPAL' | 'PAYHERE'; currency: 'USD' | 'LKR' }) =>
+    request<{ redirectUrl: string; gatewayRef: string }>(`/billing/addons/${addOnModuleId}/checkout`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  cancelAddOn: (addOnModuleId: string) =>
+    request<{ cancelled: boolean }>(`/billing/addons/${addOnModuleId}/cancel`, { method: 'POST' }),
 };

@@ -51,6 +51,18 @@ export interface TopProductRow {
   profit: number;
 }
 
+export interface VariantPerformanceRow {
+  variantId: string;
+  productId: string;
+  productName: string;
+  attributes: Record<string, string>;
+  barcode: string | null;
+  sku: string;
+  qtySold: number;
+  revenue: number;
+  profit: number;
+}
+
 export interface SlowMoverRow {
   productId: string;
   productName: string;
@@ -70,8 +82,8 @@ export interface StockValue {
 }
 
 export interface StockAlerts {
-  lowStock: { productId: string; productName: string; sku: string | null; currentStock: number; threshold: number }[];
-  deadStock: { productId: string; productName: string; sku: string | null; currentStock: number }[];
+  lowStock: { productId: string; variantId?: string | null; productName: string; variantLabel?: string | null; sku: string | null; currentStock: number; threshold: number }[];
+  deadStock: { productId: string; variantId?: string | null; productName: string; variantLabel?: string | null; sku: string | null; currentStock: number }[];
 }
 
 export interface TopCustomerRow {
@@ -117,6 +129,9 @@ export const reportApi = {
 
   getSlowMovers: (days = 30, limit = 20) =>
     rpc<SlowMoverRow[]>(`/reports/products/slow${qs({ days, limit })}`),
+
+  getVariantPerformance: (from: string, to: string, metric: 'revenue' | 'qty' | 'profit' = 'revenue', limit = 20) =>
+    rpc<VariantPerformanceRow[]>(`/reports/variants/performance${qs({ from, to, metric, limit })}`),
 
   getStockValue: () => rpc<StockValue>('/reports/stock/value'),
 

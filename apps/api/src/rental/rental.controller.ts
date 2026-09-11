@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
@@ -19,6 +20,7 @@ import { RentalService } from './rental.service';
 
 @Controller('rental')
 @UseGuards(JwtAuthGuard, SubscriptionGuard)
+@RequiresModule('rental')
 export class RentalController {
   constructor(private readonly svc: RentalService) {}
 

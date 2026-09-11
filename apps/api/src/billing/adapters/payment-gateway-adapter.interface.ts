@@ -2,6 +2,10 @@ import { BillingCurrency, BillingCycle, PaymentGateway } from '@omnipos/types';
 
 export interface CheckoutParams {
   tenantId: string;
+  /** 'plan' = the tenant's own Plan subscription; 'addon' = a purchasable AddOnModule. */
+  kind: 'plan' | 'addon';
+  /** Set when kind === 'addon' — the AddOnModule being purchased. */
+  addOnModuleId?: string;
   planId: string;
   planPriceId: string | null; // gateway-specific price/plan id (stripePriceId / paypalPlanId), null for PayHere
   amount: number; // decimal amount in `currency`, for gateways that need it up front (PayHere)
@@ -38,6 +42,9 @@ export interface NormalizedBillingEvent {
    * already-linked Subscription row instead.
    */
   tenantId?: string;
+  /** Mirrors CheckoutParams.kind/addOnModuleId, carried back from gateway metadata/custom-id/order-id. */
+  kind?: 'plan' | 'addon';
+  addOnModuleId?: string;
   /** Gateway customer/subscription reference used to resolve tenantId via Subscription lookup. */
   gatewayCustomerId?: string;
   gatewaySubscriptionId?: string;

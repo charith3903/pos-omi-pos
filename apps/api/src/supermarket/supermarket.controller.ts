@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SubscriptionGuard } from '../common/guards/subscription.guard';
@@ -21,6 +22,7 @@ import { SupermarketService } from './supermarket.service';
 
 @Controller('supermarket')
 @UseGuards(JwtAuthGuard, SubscriptionGuard, RolesGuard)
+@RequiresModule('promotions')
 export class SupermarketController {
   constructor(private readonly svc: SupermarketService) {}
 

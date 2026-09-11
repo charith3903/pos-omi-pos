@@ -74,6 +74,40 @@ export class StockService {
     return map;
   }
 
+  /**
+   * Current stock levels for ALL variants of a tenant (rows with no variant
+   * excluded). Completes what `getAllStock()`'s doc comment already claims
+   * to return (a `byVariant` breakdown) — kept as a separate cached map
+   * instead, so `getAllStock()`'s existing product-keyed shape and callers
+   * are undisturbed.
+   */
+  async getAllStockByVariant(tenantId: string): Promise<Record<string, number>> {
+    const key = `stock:${tenantId}:allVariants`;
+    const cached = await this.redis.get(key);
+    if (cached) return JSON.parse(cached);
+
+    const rows = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.$queryRaw<StockRow[]>`
+        SELECT product_id,
+               variant_id,
+               COALESCE(SUM(qty_delta), 0)::text AS stock
+        FROM   stock_movements
+        WHERE  tenant_id = current_setting('app.current_tenant', true)
+          AND  variant_id IS NOT NULL
+        GROUP  BY product_id, variant_id
+      `,
+    );
+
+    const map: Record<string, number> = {};
+    for (const row of rows) {
+      if (!row.variant_id) continue;
+      map[row.variant_id] = (map[row.variant_id] ?? 0) + parseFloat(row.stock);
+    }
+
+    await this.redis.setex(key, STOCK_TTL, JSON.stringify(map));
+    return map;
+  }
+
   /** Stock list with product names for the management UI. */
   async getStockList(tenantId: string): Promise<{ productId: string; productName: string; sku: string | null; qty: number }[]> {
     const stockMap = await this.getAllStock(tenantId);

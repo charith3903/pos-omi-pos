@@ -25,6 +25,7 @@ import {
   SlowMoversDto,
   TopCustomersDto,
   TopProductsDto,
+  VariantPerformanceDto,
 } from './dto/reports.dto';
 import { ReportsService } from './reports.service';
 
@@ -63,6 +64,13 @@ export class ReportsController {
   @Get('products/slow')
   getSlowMovers(@CurrentUser() u: RequestUser, @Query() q: SlowMoversDto) {
     return this.svc.getSlowMovers(u.tenantId, q.days, q.limit);
+  }
+
+  // ── Variants (textile) ──────────────────────────────────────────────────────
+
+  @Get('variants/performance')
+  getVariantPerformance(@CurrentUser() u: RequestUser, @Query() q: VariantPerformanceDto) {
+    return this.svc.getVariantPerformance(u.tenantId, q.from, q.to, q.metric, q.limit);
   }
 
   // ── Stock ──────────────────────────────────────────────────────────────────

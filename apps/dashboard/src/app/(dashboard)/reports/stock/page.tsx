@@ -169,6 +169,7 @@ export default function StockReportPage() {
               <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                 <tr>
                   <th className="px-5 py-3 text-left">{t('product.name')}</th>
+                  <th className="px-4 py-3 text-left">Variant</th>
                   <th className="px-4 py-3 text-left">SKU</th>
                   <th className="px-4 py-3 text-right">{t('product.stock')}</th>
                   <th className="px-4 py-3 text-right">{t('stock.threshold')}</th>
@@ -177,8 +178,9 @@ export default function StockReportPage() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {alerts.lowStock.map((r) => (
-                  <tr key={r.productId} className="hover:bg-amber-50/30">
+                  <tr key={r.variantId ?? r.productId} className="hover:bg-amber-50/30">
                     <td className="px-5 py-2.5 font-medium text-gray-800">{r.productName}</td>
+                    <td className="px-4 py-2.5 text-gray-500">{r.variantLabel ?? '—'}</td>
                     <td className="px-4 py-2.5 text-gray-400 text-xs font-mono">{r.sku ?? '—'}</td>
                     <td className="px-4 py-2.5 text-right">
                       <span className={`font-bold ${r.currentStock <= 0 ? 'text-red-600' : 'text-amber-600'}`}>
@@ -223,14 +225,16 @@ export default function StockReportPage() {
               <thead className="bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                 <tr>
                   <th className="px-5 py-3 text-left">{t('product.name')}</th>
+                  <th className="px-4 py-3 text-left">Variant</th>
                   <th className="px-4 py-3 text-left">SKU</th>
                   <th className="px-4 py-3 text-right">{t('product.stock')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {alerts.deadStock.map((r) => (
-                  <tr key={r.productId} className="hover:bg-gray-50/50">
+                  <tr key={r.variantId ?? r.productId} className="hover:bg-gray-50/50">
                     <td className="px-5 py-2.5 font-medium text-gray-700">{r.productName}</td>
+                    <td className="px-4 py-2.5 text-gray-500">{r.variantLabel ?? '—'}</td>
                     <td className="px-4 py-2.5 text-gray-400 text-xs font-mono">{r.sku ?? '—'}</td>
                     <td className="px-4 py-2.5 text-right font-medium text-gray-500">{fmtNum(r.currentStock, 1)}</td>
                   </tr>

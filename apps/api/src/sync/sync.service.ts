@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
+import { StockService } from '../stock/stock.service';
 import { SyncPushDto } from './dto/sync.dto';
 
 @Injectable()
@@ -10,6 +11,7 @@ export class SyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
+    private readonly stock: StockService,
   ) {}
 
   // ── Push ─────────────────────────────────────────────────────────────────
@@ -72,6 +74,7 @@ export class SyncService {
                 create: (data.items ?? []).map((line) => ({
                   tenantId,
                   productId: line.productId,
+                  variantId: line.variantId ?? null,
                   nameSnapshot: line.nameSnapshot,
                   qty: line.qty,
                   unitPrice: line.unitPrice,
@@ -110,6 +113,7 @@ export class SyncService {
               data: {
                 tenantId,
                 productId: line.productId,
+                variantId: line.variantId ?? null,
                 qtyDelta: -line.qty,
                 reason: 'SALE',
                 refId: item.id,
@@ -123,6 +127,7 @@ export class SyncService {
               Promise.all([
                 this.redis.del(`stock:${tenantId}:${l.productId}`),
                 this.redis.del(`stock:${tenantId}:all`),
+                this.redis.del(`stock:${tenantId}:allVariants`),
               ]),
             ),
           );
@@ -140,8 +145,8 @@ export class SyncService {
 
     // Record sync log (outside tenant context — no RLS on sync_logs)
     await this.prisma.$executeRaw`
-      INSERT INTO sync_logs (tenant_id, device_id, direction, item_count)
-      VALUES (${tenantId}, ${deviceId}, 'PUSH', ${synced + skipped})
+      INSERT INTO sync_logs (id, tenant_id, device_id, direction, item_count)
+      VALUES (gen_random_uuid(), ${tenantId}, ${deviceId}, 'PUSH', ${synced + skipped})
     `;
 
     return { synced, skipped };
@@ -229,11 +234,12 @@ export class SyncService {
     since: Date,
   ): Promise<{
     products: any[];
+    variants: any[];
     categories: any[];
     customers: any[];
     cursor: string;
   }> {
-    const [products, categories, customers] = await Promise.all([
+    const [products, variants, categories, customers, stockByProduct, stockByVariant] = await Promise.all([
       this.prisma.withTenant(tenantId, (tx) =>
         tx.product.findMany({
           where: { updatedAt: { gt: since } },
@@ -254,6 +260,22 @@ export class SyncService {
         }),
       ),
       this.prisma.withTenant(tenantId, (tx) =>
+        tx.productVariant.findMany({
+          where: { updatedAt: { gt: since } },
+          select: {
+            id: true,
+            productId: true,
+            attributes: true,
+            price: true,
+            barcode: true,
+            sku: true,
+            updatedAt: true,
+          },
+          orderBy: { updatedAt: 'asc' },
+          take: 1000,
+        }),
+      ),
+      this.prisma.withTenant(tenantId, (tx) =>
         tx.category.findMany({
           where: { updatedAt: { gt: since } },
           select: { id: true, name: true, parentId: true, updatedAt: true },
@@ -269,14 +291,16 @@ export class SyncService {
           take: 500,
         }),
       ),
+      this.stock.getAllStock(tenantId),
+      this.stock.getAllStockByVariant(tenantId),
     ]);
 
     const cursor = new Date().toISOString();
 
     await this.prisma.$executeRaw`
-      INSERT INTO sync_logs (tenant_id, device_id, direction, item_count, cursor)
-      VALUES (${tenantId}, 'pull', 'PULL',
-              ${products.length + categories.length + customers.length},
+      INSERT INTO sync_logs (id, tenant_id, device_id, direction, item_count, cursor)
+      VALUES (gen_random_uuid(), ${tenantId}, 'pull', 'PULL',
+              ${products.length + variants.length + categories.length + customers.length},
               ${cursor})
     `;
 
@@ -285,7 +309,14 @@ export class SyncService {
         ...p,
         price: Number(p.price),
         taxRate: Number(p.taxRate),
+        stockQty: stockByProduct[p.id] ?? 0,
         updatedAt: p.updatedAt.toISOString(),
+      })),
+      variants: variants.map((v) => ({
+        ...v,
+        price: v.price != null ? Number(v.price) : null,
+        stockQty: stockByVariant[v.id] ?? 0,
+        updatedAt: v.updatedAt.toISOString(),
       })),
       categories: categories.map((c) => ({
         ...c,

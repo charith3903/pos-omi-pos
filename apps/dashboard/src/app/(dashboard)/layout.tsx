@@ -41,6 +41,7 @@ import {
   Gift,
   Wine,
   CreditCard,
+  Puzzle,
 } from 'lucide-react';
 
 const LOCALES: { code: Locale; label: string }[] = [
@@ -196,12 +197,15 @@ function Sidebar() {
         {navItem('/reports/products',  t('nav.productRpt'), <Tag className="w-4 h-4" />)}
         {navItem('/reports/stock',     t('nav.stock'),      <AlertTriangle className="w-4 h-4" />, lowStockCount)}
         {navItem('/reports/customers', t('nav.customers'),  <Users className="w-4 h-4" />)}
+        {pack.enabledModules.includes('variants') &&
+          navItem('/reports/variants', t('nav.variantRpt'), <Shirt className="w-4 h-4" />)}
 
         {/* Account section */}
         <p className="px-6 pt-5 pb-2 text-xs font-semibold text-slate-500 uppercase tracking-wider">
           Account
         </p>
         {navItem('/account/subscription', 'Subscription & Billing', <CreditCard className="w-4 h-4" />)}
+        {navItem('/settings/addons', 'Add-ons Store', <Puzzle className="w-4 h-4" />)}
         {navItem('/settings/messaging', 'Messaging (WhatsApp/SMS)', <MessageCircle className="w-4 h-4" />)}
       </nav>
 

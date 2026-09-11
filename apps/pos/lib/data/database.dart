@@ -18,6 +18,7 @@ class ProductData {
   final double taxRate;
   final bool trackStock;
   final Map<String, dynamic> attributes;
+  final double stockQty;
 
   const ProductData({
     required this.id,
@@ -29,6 +30,7 @@ class ProductData {
     required this.taxRate,
     required this.trackStock,
     this.attributes = const {},
+    this.stockQty = 0,
   });
 
   factory ProductData.fromMap(Map<String, dynamic> m) {
@@ -49,6 +51,7 @@ class ProductData {
       taxRate: (m['tax_rate'] as num?)?.toDouble() ?? 0.0,
       trackStock: (m['track_stock'] as int?) == 1,
       attributes: attrs,
+      stockQty: (m['stock_qty'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -57,6 +60,48 @@ class ProductData {
     final v = attributes[key];
     return v != null ? '$v' : null;
   }
+}
+
+class ProductVariantData {
+  final String id;
+  final String productId;
+  final Map<String, dynamic> attributes;
+  final String? barcode;
+  final String? sku;
+  final double? price;
+  final double stockQty;
+
+  const ProductVariantData({
+    required this.id,
+    required this.productId,
+    this.attributes = const {},
+    this.barcode,
+    this.sku,
+    this.price,
+    this.stockQty = 0,
+  });
+
+  factory ProductVariantData.fromMap(Map<String, dynamic> m) {
+    Map<String, dynamic> attrs = {};
+    final raw = m['attributes'];
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        attrs = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      } catch (_) {}
+    }
+    return ProductVariantData(
+      id: m['id'] as String,
+      productId: m['product_id'] as String,
+      attributes: attrs,
+      barcode: m['barcode'] as String?,
+      sku: m['sku'] as String?,
+      price: (m['price'] as num?)?.toDouble(),
+      stockQty: (m['stock_qty'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  /// e.g. "M / Red" — generic over however many attribute keys exist.
+  String get label => attributes.values.where((v) => v != null && '$v'.isNotEmpty).join(' / ');
 }
 
 class InvoiceItemInput {
@@ -133,8 +178,9 @@ class AppDatabase {
     if (_db != null) return _db!;
     _db = await openDatabase(
       join(await getDatabasesPath(), 'omnipos_local.db'),
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
     return _db!;
   }
@@ -153,6 +199,14 @@ class AppDatabase {
         price REAL NOT NULL, tax_rate REAL NOT NULL DEFAULT 0,
         track_stock INTEGER NOT NULL DEFAULT 0,
         category_id TEXT, attributes TEXT,
+        stock_qty REAL NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      )''');
+    b.execute('''
+      CREATE TABLE IF NOT EXISTS product_variants (
+        id TEXT PRIMARY KEY, product_id TEXT NOT NULL,
+        attributes TEXT, barcode TEXT, sku TEXT,
+        price REAL, stock_qty REAL NOT NULL DEFAULT 0,
         updated_at INTEGER NOT NULL
       )''');
     b.execute('''
@@ -208,7 +262,30 @@ class AppDatabase {
     // Indexes
     b.execute('CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)');
     b.execute('CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_items(status)');
+    b.execute('CREATE INDEX IF NOT EXISTS idx_variants_barcode ON product_variants(barcode)');
+    b.execute('CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id)');
     await b.commit(noResult: true);
+  }
+
+  /// v1 -> v2: adds product_variants + products.stock_qty for the variant
+  /// picker. Idempotent — dev devices may already be on v1.
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      try {
+        await db.execute('ALTER TABLE products ADD COLUMN stock_qty REAL NOT NULL DEFAULT 0');
+      } catch (_) {
+        // Column already exists (e.g. re-running on a partially-upgraded db).
+      }
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS product_variants (
+          id TEXT PRIMARY KEY, product_id TEXT NOT NULL,
+          attributes TEXT, barcode TEXT, sku TEXT,
+          price REAL, stock_qty REAL NOT NULL DEFAULT 0,
+          updated_at INTEGER NOT NULL
+        )''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_variants_barcode ON product_variants(barcode)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id)');
+    }
   }
 
   // ── Product queries ──────────────────────────────────────────────────────
@@ -244,6 +321,30 @@ class AppDatabase {
     final rows = await db.query('products',
         where: 'barcode = ?', whereArgs: [barcode], limit: 1);
     return rows.isEmpty ? null : ProductData.fromMap(rows.first);
+  }
+
+  Future<ProductData?> getProductById(String id) async {
+    final db = await _open;
+    final rows = await db.query('products', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : ProductData.fromMap(rows.first);
+  }
+
+  // ── Variant queries ──────────────────────────────────────────────────────
+
+  Future<List<ProductVariantData>> variantsForProduct(String productId) async {
+    final db = await _open;
+    final rows = await db.query('product_variants',
+        where: 'product_id = ?', whereArgs: [productId]);
+    return rows.map(ProductVariantData.fromMap).toList();
+  }
+
+  /// Barcode is indexed but not guaranteed unique (matches the server side) —
+  /// takes the first match, same convention as [findByBarcode].
+  Future<ProductVariantData?> findVariantByBarcode(String barcode) async {
+    final db = await _open;
+    final rows = await db.query('product_variants',
+        where: 'barcode = ?', whereArgs: [barcode], limit: 1);
+    return rows.isEmpty ? null : ProductVariantData.fromMap(rows.first);
   }
 
   // ── Customer queries ─────────────────────────────────────────────────────
@@ -403,8 +504,34 @@ class AppDatabase {
           'attributes': p['attributes'] != null
               ? jsonEncode(p['attributes'])
               : null,
+          'stock_qty': (p['stockQty'] as num?)?.toDouble() ?? 0,
           'updated_at':
               DateTime.parse(p['updatedAt'] as String).millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await b.commit(noResult: true);
+  }
+
+  Future<void> upsertVariantsFromJson(List<Map<String, dynamic>> data) async {
+    final db = await _open;
+    final b = db.batch();
+    for (final v in data) {
+      b.insert(
+        'product_variants',
+        {
+          'id': v['id'],
+          'product_id': v['productId'],
+          'attributes': v['attributes'] != null
+              ? jsonEncode(v['attributes'])
+              : null,
+          'barcode': v['barcode'],
+          'sku': v['sku'],
+          'price': (v['price'] as num?)?.toDouble(),
+          'stock_qty': (v['stockQty'] as num?)?.toDouble() ?? 0,
+          'updated_at':
+              DateTime.parse(v['updatedAt'] as String).millisecondsSinceEpoch,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );

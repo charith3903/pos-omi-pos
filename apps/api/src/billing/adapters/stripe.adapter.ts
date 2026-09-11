@@ -36,16 +36,20 @@ export class StripeAdapter implements PaymentGatewayAdapter {
       throw new Error('Stripe checkout requires Plan.stripePriceId to be configured');
     }
 
+    const metadata = {
+      tenantId: params.tenantId,
+      planId: params.planId,
+      kind: params.kind,
+      addOnModuleId: params.addOnModuleId ?? '',
+    };
     const session = await this.stripe.checkout.sessions.create({
       mode: 'subscription',
       customer_email: params.customerEmail,
       line_items: [{ price: params.planPriceId, quantity: 1 }],
       success_url: params.successUrl,
       cancel_url: params.cancelUrl,
-      metadata: { tenantId: params.tenantId, planId: params.planId },
-      subscription_data: {
-        metadata: { tenantId: params.tenantId, planId: params.planId },
-      },
+      metadata,
+      subscription_data: { metadata },
     });
 
     if (!session.url) throw new Error('Stripe did not return a checkout URL');
@@ -74,6 +78,8 @@ export class StripeAdapter implements PaymentGatewayAdapter {
           type: 'subscription.activated',
           gateway: this.gateway,
           tenantId: session.metadata?.tenantId,
+          kind: (session.metadata?.kind as 'plan' | 'addon') || 'plan',
+          addOnModuleId: session.metadata?.addOnModuleId || undefined,
           gatewayCustomerId: String(session.customer),
           gatewaySubscriptionId: String(session.subscription),
           gatewayTxnId: event.id,
@@ -85,10 +91,13 @@ export class StripeAdapter implements PaymentGatewayAdapter {
       case 'invoice.paid': {
         const invoice = event.data.object as Stripe.Invoice;
         const subscriptionId = this.extractSubscriptionId(invoice);
+        const meta = await this.fetchSubscriptionMetadata(subscriptionId);
         return {
           type: 'subscription.renewed',
           gateway: this.gateway,
-          tenantId: await this.fetchTenantIdFromSubscription(subscriptionId),
+          tenantId: meta?.tenantId,
+          kind: meta?.kind,
+          addOnModuleId: meta?.addOnModuleId,
           gatewayCustomerId: String(invoice.customer),
           gatewaySubscriptionId: subscriptionId,
           gatewayTxnId: event.id,
@@ -103,10 +112,13 @@ export class StripeAdapter implements PaymentGatewayAdapter {
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice;
         const subscriptionId = this.extractSubscriptionId(invoice);
+        const meta = await this.fetchSubscriptionMetadata(subscriptionId);
         return {
           type: 'subscription.payment_failed',
           gateway: this.gateway,
-          tenantId: await this.fetchTenantIdFromSubscription(subscriptionId),
+          tenantId: meta?.tenantId,
+          kind: meta?.kind,
+          addOnModuleId: meta?.addOnModuleId,
           gatewayCustomerId: String(invoice.customer),
           gatewaySubscriptionId: subscriptionId,
           gatewayTxnId: event.id,
@@ -121,6 +133,8 @@ export class StripeAdapter implements PaymentGatewayAdapter {
           type: 'subscription.cancelled',
           gateway: this.gateway,
           tenantId: sub.metadata?.tenantId,
+          kind: (sub.metadata?.kind as 'plan' | 'addon') || 'plan',
+          addOnModuleId: sub.metadata?.addOnModuleId || undefined,
           gatewayCustomerId: String(sub.customer),
           gatewaySubscriptionId: sub.id,
           gatewayTxnId: event.id,
@@ -143,15 +157,22 @@ export class StripeAdapter implements PaymentGatewayAdapter {
   /**
    * Renewal/failure/cancellation webhooks don't carry the subscription's
    * metadata inline — only the subscription id. Fetch it once from Stripe
-   * (source of truth for `tenantId`, set at checkout via
-   * `subscription_data.metadata`) rather than maintaining a separate local
-   * mapping table just to resolve which tenant a webhook belongs to.
+   * (source of truth for `tenantId`/`kind`/`addOnModuleId`, set at checkout
+   * via `subscription_data.metadata`) rather than maintaining a separate
+   * local mapping table just to resolve which tenant/purchase a webhook
+   * belongs to.
    */
-  private async fetchTenantIdFromSubscription(subscriptionId: string | undefined): Promise<string | undefined> {
+  private async fetchSubscriptionMetadata(
+    subscriptionId: string | undefined,
+  ): Promise<{ tenantId?: string; kind?: 'plan' | 'addon'; addOnModuleId?: string } | undefined> {
     if (!subscriptionId) return undefined;
     try {
       const sub = await this.stripe.subscriptions.retrieve(subscriptionId);
-      return sub.metadata?.tenantId;
+      return {
+        tenantId: sub.metadata?.tenantId,
+        kind: (sub.metadata?.kind as 'plan' | 'addon') || 'plan',
+        addOnModuleId: sub.metadata?.addOnModuleId || undefined,
+      };
     } catch (err) {
       this.logger.error(`Failed to fetch Stripe subscription ${subscriptionId} for tenant resolution`, err);
       return undefined;

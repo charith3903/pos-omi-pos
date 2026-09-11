@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
 import { api } from '@/lib/api';
 import { DEFAULT_PACK, fetchVerticalPack, label } from '@/lib/vertical';
 import type { VerticalPack } from '@/lib/vertical';
 import { DynamicProductForm } from '@/components/DynamicProductForm';
+import { BarcodeLabel } from '@/components/BarcodeLabel';
 
 interface Product {
   id: string;
@@ -180,6 +181,8 @@ function VariantsModal({ product, onClose }: { product: Product; onClose: () => 
   const [barcodePrefix, setBarcodePrefix] = useState(product.sku ?? '');
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: { row: number; sku: string; reason: string }[] } | null>(null);
 
   function load() {
     api.listVariants(product.id).then((res) => setVariants(res.variants)).catch(() => {});
@@ -202,6 +205,24 @@ function VariantsModal({ product, onClose }: { product: Product; onClose: () => 
       setError(err.message ?? 'Failed to generate variants');
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function handleImportCsv(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    setError('');
+    try {
+      const res = await api.importVariantsCsv(file);
+      setImportResult(res);
+      load();
+    } catch (err: any) {
+      setError(err.message ?? 'CSV import failed');
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -233,6 +254,30 @@ function VariantsModal({ product, onClose }: { product: Product; onClose: () => 
           </button>
 
           <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">Or import from CSV</h3>
+            <p className="text-xs text-gray-500 mb-2">
+              Columns: <code>sku, size, color, barcode, price</code> (barcode/price optional). Re-uploading updates
+              existing barcodes/prices for matching size/color rows.
+            </p>
+            <label className={`inline-block px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer ${importing ? 'bg-gray-200 text-gray-400' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+              {importing ? 'Importing…' : 'Choose CSV file'}
+              <input type="file" accept=".csv,text/csv" onChange={handleImportCsv} disabled={importing} className="hidden" />
+            </label>
+            {importResult && (
+              <div className="mt-2 text-sm">
+                <p className="text-green-700">{importResult.created} created, {importResult.updated} updated</p>
+                {importResult.errors.length > 0 && (
+                  <ul className="mt-1 text-red-600 text-xs list-disc list-inside">
+                    {importResult.errors.map((e, i) => (
+                      <li key={i}>Row {e.row} ({e.sku || '—'}): {e.reason}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-gray-100 pt-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-2">Existing variants ({variants.length})</h3>
             <div className="max-h-64 overflow-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
               {variants.map((v) => {
@@ -254,6 +299,231 @@ function VariantsModal({ product, onClose }: { product: Product; onClose: () => 
   );
 }
 
+// ─── Size chart ───────────────────────────────────────────────────────────────
+
+interface SizeChartRow {
+  size: string;
+  chest?: string;
+  length?: string;
+  shoulder?: string;
+  sleeve?: string;
+  waist?: string;
+}
+
+const SIZE_CHART_COLUMNS: { key: keyof SizeChartRow; label: string }[] = [
+  { key: 'size', label: 'Size' },
+  { key: 'chest', label: 'Chest' },
+  { key: 'length', label: 'Length' },
+  { key: 'shoulder', label: 'Shoulder' },
+  { key: 'sleeve', label: 'Sleeve' },
+  { key: 'waist', label: 'Waist' },
+];
+
+function SizeChartModal({ product, onClose }: { product: Product; onClose: () => void }) {
+  const [rows, setRows] = useState<SizeChartRow[]>(
+    (product.attributes?.size_chart as SizeChartRow[] | undefined) ?? [{ size: '' }],
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function setCell(i: number, key: keyof SizeChartRow, value: string) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [key]: value } : r)));
+  }
+
+  function addRow() {
+    setRows((prev) => [...prev, { size: '' }]);
+  }
+
+  function removeRow(i: number) {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError('');
+    try {
+      const cleaned = rows.filter((r) => r.size.trim());
+      await api.updateProduct(product.id, {
+        attributes: { ...(product.attributes ?? {}), size_chart: cleaned },
+      });
+      setRows(cleaned.length ? cleaned : [{ size: '' }]);
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to save size chart');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b print:hidden">
+          <h2 className="font-semibold text-gray-900">Size Chart — {product.name}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+        </div>
+
+        <div className="p-6 space-y-4 print:hidden">
+          <p className="text-xs text-gray-500">All measurements in cm. Leave a column blank if not applicable.</p>
+          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  {SIZE_CHART_COLUMNS.map((c) => (
+                    <th key={c.key} className="px-3 py-2 text-left text-xs font-medium text-gray-500">{c.label}</th>
+                  ))}
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {rows.map((row, i) => (
+                  <tr key={i}>
+                    {SIZE_CHART_COLUMNS.map((c) => (
+                      <td key={c.key} className="px-2 py-1.5">
+                        <input
+                          value={row[c.key] ?? ''}
+                          onChange={(e) => setCell(i, c.key, e.target.value)}
+                          className="w-full border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        />
+                      </td>
+                    ))}
+                    <td className="px-2 py-1.5">
+                      <button onClick={() => removeRow(i)} className="text-gray-400 hover:text-red-600 text-xs">✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button onClick={addRow} className="text-primary-600 hover:text-primary-800 text-sm font-medium">+ Add row</button>
+
+          {error && <p className="text-red-600 text-sm">{error}</p>}
+
+          <div className="flex gap-3">
+            <button onClick={handleSave} disabled={saving} className="bg-primary-700 hover:bg-primary-800 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+              {saving ? 'Saving…' : 'Save Size Chart'}
+            </button>
+            <button onClick={() => window.print()} className="border border-gray-300 text-gray-700 hover:bg-gray-50 px-4 py-2 rounded-lg text-sm font-semibold">
+              Print
+            </button>
+          </div>
+        </div>
+
+        {/* Print-only clean table for handing to a customer */}
+        <div className="hidden print:block p-6">
+          <h2 className="font-semibold text-gray-900 mb-3">{product.name} — Size Chart (cm)</h2>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr>
+                {SIZE_CHART_COLUMNS.map((c) => (
+                  <th key={c.key} className="border border-gray-300 px-3 py-1.5 text-left">{c.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.filter((r) => r.size.trim()).map((row, i) => (
+                <tr key={i}>
+                  {SIZE_CHART_COLUMNS.map((c) => (
+                    <td key={c.key} className="border border-gray-300 px-3 py-1.5">{row[c.key] ?? ''}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Barcode label printing ─────────────────────────────────────────────────
+
+function LabelPrintModal({ product, onClose }: { product: Product; onClose: () => void }) {
+  const [variants, setVariants] = useState<any[]>([]);
+  const [qtyByVariant, setQtyByVariant] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .listVariants(product.id)
+      .then((res) => {
+        setVariants(res.variants);
+        setQtyByVariant(Object.fromEntries(res.variants.map((v: any) => [v.id, v.barcode ? 1 : 0])));
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [product.id]);
+
+  function setQty(variantId: string, qty: number) {
+    setQtyByVariant((prev) => ({ ...prev, [variantId]: Math.max(0, qty) }));
+  }
+
+  const labels: { key: string; variant: any }[] = [];
+  for (const v of variants) {
+    const qty = qtyByVariant[v.id] ?? 0;
+    for (let i = 0; i < qty; i++) labels.push({ key: `${v.id}-${i}`, variant: v });
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[85vh] overflow-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b print:hidden">
+          <h2 className="font-semibold text-gray-900">Print Labels — {product.name}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+        </div>
+
+        <div className="p-6 space-y-4 print:hidden">
+          {loading ? (
+            <p className="text-sm text-gray-400">Loading variants…</p>
+          ) : variants.length === 0 ? (
+            <p className="text-sm text-gray-400">This product has no variants yet — generate them first.</p>
+          ) : (
+            <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+              {variants.map((v) => {
+                const a = v.attributes ?? {};
+                return (
+                  <div key={v.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                    <div>
+                      <span className="text-gray-800">{[a.size, a.color].filter(Boolean).join(' / ')}</span>
+                      <span className="text-gray-400 font-mono text-xs ml-2">{v.barcode ?? 'no barcode'}</span>
+                    </div>
+                    <input
+                      type="number"
+                      min={0}
+                      value={qtyByVariant[v.id] ?? 0}
+                      onChange={(e) => setQty(v.id, Number(e.target.value))}
+                      className="w-20 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <button
+            onClick={() => window.print()}
+            disabled={labels.length === 0}
+            className="bg-primary-700 hover:bg-primary-800 disabled:opacity-40 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+          >
+            Print {labels.length} label{labels.length === 1 ? '' : 's'}
+          </button>
+        </div>
+
+        <div className="hidden print:flex print:flex-wrap print:gap-2 p-2">
+          {labels.map(({ key, variant }) => (
+            <BarcodeLabel
+              key={key}
+              productName={product.name}
+              variantLabel={[variant.attributes?.size, variant.attributes?.color].filter(Boolean).join(' / ')}
+              price={variant.price ?? product.price}
+              barcode={variant.barcode ?? ''}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function GenericProducts() {
@@ -263,9 +533,13 @@ export default function GenericProducts() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [seasonFilter, setSeasonFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<Product | null | 'new'>(null);
   const [variantsProduct, setVariantsProduct] = useState<Product | null>(null);
+  const [labelsProduct, setLabelsProduct] = useState<Product | null>(null);
+  const [sizeChartProduct, setSizeChartProduct] = useState<Product | null>(null);
 
   // Fetch pack once on mount
   useEffect(() => {
@@ -276,7 +550,13 @@ export default function GenericProducts() {
     setLoading(true);
     try {
       const [pRes, cats] = await Promise.all([
-        api.getProducts({ search: search || undefined, page, limit: 20 }),
+        api.getProducts({
+          search: search || undefined,
+          categoryId: categoryFilter || undefined,
+          season: seasonFilter || undefined,
+          page,
+          limit: 20,
+        }),
         categories.length ? Promise.resolve(categories) : api.getCategories(),
       ]);
       setProducts(pRes.items);
@@ -285,7 +565,7 @@ export default function GenericProducts() {
     } finally {
       setLoading(false);
     }
-  }, [search, page]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, categoryFilter, seasonFilter, page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
@@ -335,7 +615,7 @@ export default function GenericProducts() {
         </div>
       )}
 
-      {/* Search */}
+      {/* Search + filters */}
       <div className="flex gap-3 mb-4">
         <input
           type="search"
@@ -344,6 +624,34 @@ export default function GenericProducts() {
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-80 focus:outline-none focus:ring-2 focus:ring-primary-500"
         />
+        {categories.length > 0 && (
+          <select
+            value={categoryFilter}
+            onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+          >
+            <option value="">All {label(pack, 'category', 'categories').toLowerCase()}</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        )}
+        {(() => {
+          const seasonField = pack.productFields.find((f) => f.key === 'season');
+          if (!seasonField?.options?.length) return null;
+          return (
+            <select
+              value={seasonFilter}
+              onChange={(e) => { setSeasonFilter(e.target.value); setPage(1); }}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">All {seasonField.label.toLowerCase()}s</option>
+              {seasonField.options.map((o) => (
+                <option key={o} value={o}>{o}</option>
+              ))}
+            </select>
+          );
+        })()}
       </div>
 
       {/* Table */}
@@ -399,7 +707,11 @@ export default function GenericProducts() {
                 <td className="px-4 py-3">
                   <div className="flex gap-2 justify-end">
                     {pack.enabledModules.includes('variants') && (
-                      <button onClick={() => setVariantsProduct(p)} className="text-purple-600 hover:text-purple-800 text-xs font-medium">Variants</button>
+                      <>
+                        <button onClick={() => setVariantsProduct(p)} className="text-purple-600 hover:text-purple-800 text-xs font-medium">Variants</button>
+                        <button onClick={() => setLabelsProduct(p)} className="text-purple-600 hover:text-purple-800 text-xs font-medium">Labels</button>
+                        <button onClick={() => setSizeChartProduct(p)} className="text-purple-600 hover:text-purple-800 text-xs font-medium">Size Chart</button>
+                      </>
                     )}
                     <button onClick={() => setEditing(p)} className="text-primary-600 hover:text-primary-800 text-xs font-medium">Edit</button>
                     <button onClick={() => handleDelete(p.id)} className="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
@@ -423,6 +735,12 @@ export default function GenericProducts() {
 
       {variantsProduct && (
         <VariantsModal product={variantsProduct} onClose={() => setVariantsProduct(null)} />
+      )}
+      {labelsProduct && (
+        <LabelPrintModal product={labelsProduct} onClose={() => setLabelsProduct(null)} />
+      )}
+      {sizeChartProduct && (
+        <SizeChartModal product={sizeChartProduct} onClose={() => setSizeChartProduct(null)} />
       )}
     </div>
   );

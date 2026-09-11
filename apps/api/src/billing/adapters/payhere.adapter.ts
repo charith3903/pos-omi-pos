@@ -53,7 +53,10 @@ export class PayhereAdapter implements PaymentGatewayAdapter {
   }
 
   async createCheckoutSession(params: CheckoutParams): Promise<CheckoutResult> {
-    const orderId = `sub_${params.tenantId}_${Date.now()}`;
+    const orderId =
+      params.kind === 'addon'
+        ? `addon_${params.tenantId}_${params.addOnModuleId}_${Date.now()}`
+        : `plan_${params.tenantId}_${Date.now()}`;
     const hash = this.computeCheckoutHash(orderId, params.amount, params.currency);
 
     const fields = {
@@ -62,7 +65,10 @@ export class PayhereAdapter implements PaymentGatewayAdapter {
       cancel_url: params.cancelUrl,
       notify_url: `${this.apiBaseUrl}/billing/webhooks/payhere`,
       order_id: orderId,
-      items: `OmniPOS subscription (${params.billingCycle})`,
+      items:
+        params.kind === 'addon'
+          ? `OmniPOS add-on module (${params.billingCycle})`
+          : `OmniPOS subscription (${params.billingCycle})`,
       currency: params.currency,
       amount: params.amount.toFixed(2),
       first_name: params.customerEmail.split('@')[0],
@@ -117,10 +123,11 @@ export class PayhereAdapter implements PaymentGatewayAdapter {
     const parsedAmount = Number(amount);
     const parsedCurrency = (currency || 'LKR') as 'LKR';
 
-    // order_id is `sub_<tenantId>_<timestamp>` (see createCheckoutSession) —
-    // cuid()-generated tenant ids are alphanumeric only, so splitting on
-    // '_' is safe.
-    const tenantId = orderId.startsWith('sub_') ? orderId.split('_')[1] : undefined;
+    // order_id is `plan_<tenantId>_<ts>` or `addon_<tenantId>_<addOnModuleId>_<ts>`
+    // (see createCheckoutSession; `sub_` kept as a legacy alias for `plan_` in
+    // case an in-flight checkout from before this change is still delivering).
+    // cuid()-generated ids are alphanumeric only, so splitting on '_' is safe.
+    const { tenantId, kind, addOnModuleId } = this.parseOrderId(orderId);
 
     switch (statusCode) {
       case '2':
@@ -128,6 +135,8 @@ export class PayhereAdapter implements PaymentGatewayAdapter {
           type: 'subscription.activated',
           gateway: this.gateway,
           tenantId,
+          kind,
+          addOnModuleId,
           gatewaySubscriptionId: orderId,
           gatewayTxnId,
           amount: parsedAmount,
@@ -139,6 +148,9 @@ export class PayhereAdapter implements PaymentGatewayAdapter {
         return {
           type: 'subscription.cancelled',
           gateway: this.gateway,
+          tenantId,
+          kind,
+          addOnModuleId,
           gatewaySubscriptionId: orderId,
           gatewayTxnId,
           amount: parsedAmount,
@@ -150,6 +162,9 @@ export class PayhereAdapter implements PaymentGatewayAdapter {
         return {
           type: 'subscription.payment_failed',
           gateway: this.gateway,
+          tenantId,
+          kind,
+          addOnModuleId,
           gatewaySubscriptionId: orderId,
           gatewayTxnId,
           amount: parsedAmount,
@@ -160,6 +175,18 @@ export class PayhereAdapter implements PaymentGatewayAdapter {
         this.logger.debug(`Ignoring PayHere status_code=${statusCode} (pending or unknown)`);
         return null;
     }
+  }
+
+  private parseOrderId(orderId: string): { tenantId?: string; kind: 'plan' | 'addon'; addOnModuleId?: string } {
+    if (orderId.startsWith('addon_')) {
+      const [, tenantId, addOnModuleId] = orderId.split('_');
+      return { tenantId, kind: 'addon', addOnModuleId };
+    }
+    if (orderId.startsWith('plan_') || orderId.startsWith('sub_')) {
+      const [, tenantId] = orderId.split('_');
+      return { tenantId, kind: 'plan' };
+    }
+    return { kind: 'plan' };
   }
 
   async cancelSubscription(_refs: SubscriptionGatewayRefs): Promise<void> {

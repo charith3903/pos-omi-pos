@@ -71,6 +71,28 @@ export class PaypalAdapter implements PaymentGatewayAdapter {
     return (await res.json()) as T;
   }
 
+  /**
+   * PayPal's `custom_id` only holds a single string — encode purchase intent
+   * into it so webhooks (which only carry this id, not our DB rows) can tell
+   * a plan purchase from an add-on purchase apart, and which add-on.
+   */
+  private encodeCustomId(params: CheckoutParams): string {
+    return params.kind === 'addon' ? `${params.tenantId}::addon::${params.addOnModuleId}` : params.tenantId;
+  }
+
+  private parseCustomId(customId: string | undefined): {
+    tenantId?: string;
+    kind: 'plan' | 'addon';
+    addOnModuleId?: string;
+  } {
+    if (!customId) return { kind: 'plan' };
+    const parts = customId.split('::');
+    if (parts.length === 3 && parts[1] === 'addon') {
+      return { tenantId: parts[0], kind: 'addon', addOnModuleId: parts[2] };
+    }
+    return { tenantId: customId, kind: 'plan' };
+  }
+
   async createCheckoutSession(params: CheckoutParams): Promise<CheckoutResult> {
     if (!params.planPriceId) {
       throw new Error('PayPal checkout requires Plan.paypalPlanId to be configured');
@@ -82,7 +104,7 @@ export class PaypalAdapter implements PaymentGatewayAdapter {
       {
         plan_id: params.planPriceId,
         subscriber: { email_address: params.customerEmail },
-        custom_id: params.tenantId,
+        custom_id: this.encodeCustomId(params),
         application_context: {
           return_url: params.successUrl,
           cancel_url: params.cancelUrl,
@@ -131,23 +153,30 @@ export class PaypalAdapter implements PaymentGatewayAdapter {
     const gatewayTxnId: string = event.id;
 
     switch (event.event_type) {
-      case 'BILLING.SUBSCRIPTION.ACTIVATED':
+      case 'BILLING.SUBSCRIPTION.ACTIVATED': {
+        const parsed = this.parseCustomId(resource.custom_id);
         return {
           type: 'subscription.activated',
           gateway: this.gateway,
-          tenantId: resource.custom_id,
+          tenantId: parsed.tenantId,
+          kind: parsed.kind,
+          addOnModuleId: parsed.addOnModuleId,
           gatewaySubscriptionId: resource.id,
           gatewayTxnId,
           amount: Number(resource.billing_info?.last_payment?.amount?.value ?? 0),
           currency: (resource.billing_info?.last_payment?.amount?.currency_code ?? 'USD') as 'USD',
           raw: event,
         };
+      }
       case 'PAYMENT.SALE.COMPLETED': {
         const subId = resource.billing_agreement_id;
+        const parsed = subId ? await this.fetchSubscriptionMetadata(subId) : undefined;
         return {
           type: 'subscription.renewed',
           gateway: this.gateway,
-          tenantId: subId ? await this.fetchTenantIdFromSubscription(subId) : undefined,
+          tenantId: parsed?.tenantId,
+          kind: parsed?.kind,
+          addOnModuleId: parsed?.addOnModuleId,
           gatewaySubscriptionId: subId,
           gatewayTxnId,
           amount: Number(resource.amount?.total ?? 0),
@@ -155,28 +184,36 @@ export class PaypalAdapter implements PaymentGatewayAdapter {
           raw: event,
         };
       }
-      case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':
+      case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED': {
+        const parsed = await this.fetchSubscriptionMetadata(resource.id);
         return {
           type: 'subscription.payment_failed',
           gateway: this.gateway,
-          tenantId: await this.fetchTenantIdFromSubscription(resource.id),
+          tenantId: parsed?.tenantId,
+          kind: parsed?.kind,
+          addOnModuleId: parsed?.addOnModuleId,
           gatewaySubscriptionId: resource.id,
           gatewayTxnId,
           amount: 0,
           currency: 'USD',
           raw: event,
         };
-      case 'BILLING.SUBSCRIPTION.CANCELLED':
+      }
+      case 'BILLING.SUBSCRIPTION.CANCELLED': {
+        const parsed = await this.fetchSubscriptionMetadata(resource.id);
         return {
           type: 'subscription.cancelled',
           gateway: this.gateway,
-          tenantId: await this.fetchTenantIdFromSubscription(resource.id),
+          tenantId: parsed?.tenantId,
+          kind: parsed?.kind,
+          addOnModuleId: parsed?.addOnModuleId,
           gatewaySubscriptionId: resource.id,
           gatewayTxnId,
           amount: 0,
           currency: 'USD',
           raw: event,
         };
+      }
       default:
         this.logger.debug(`Ignoring unhandled PayPal event type: ${event.event_type}`);
         return null;
@@ -193,16 +230,18 @@ export class PaypalAdapter implements PaymentGatewayAdapter {
   /**
    * Renewal/failure/cancellation webhooks reference a subscription id but
    * not its `custom_id` inline — fetch the subscription itself (source of
-   * truth for tenantId, set at creation via `custom_id`) rather than
-   * maintaining a separate local mapping table.
+   * truth for tenantId/kind/addOnModuleId, set at creation via `custom_id`)
+   * rather than maintaining a separate local mapping table.
    */
-  private async fetchTenantIdFromSubscription(subscriptionId: string): Promise<string | undefined> {
+  private async fetchSubscriptionMetadata(
+    subscriptionId: string,
+  ): Promise<{ tenantId?: string; kind: 'plan' | 'addon'; addOnModuleId?: string } | undefined> {
     try {
       const sub = await this.call<{ custom_id?: string }>(
         `/v1/billing/subscriptions/${subscriptionId}`,
         'GET',
       );
-      return sub.custom_id;
+      return this.parseCustomId(sub.custom_id);
     } catch (err) {
       this.logger.error(`Failed to fetch PayPal subscription ${subscriptionId} for tenant resolution`, err);
       return undefined;

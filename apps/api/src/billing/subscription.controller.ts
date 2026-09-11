@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { BusinessType } from '@omnipos/types';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -6,6 +6,7 @@ import { RequestUser } from '../common/interfaces/request-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from './payments.service';
 import { CreateCheckoutDto } from './dto/create-checkout.dto';
+import { CreateAddOnCheckoutDto } from './dto/create-addon-checkout.dto';
 
 /**
  * Deliberately NOT behind SubscriptionGuard (unlike almost every other
@@ -64,6 +65,30 @@ export class SubscriptionController {
   @Post('subscription/cancel')
   async cancel(@CurrentUser() user: RequestUser) {
     await this.payments.cancelSubscription(user.tenantId);
+    return { cancelled: true };
+  }
+
+  /** Add-on modules available for the tenant's business type, each flagged with current entitlement. */
+  @UseGuards(JwtAuthGuard)
+  @Get('addons')
+  async getAddOns(@CurrentUser() user: RequestUser) {
+    return this.payments.listAddOnsForTenant(user.tenantId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('addons/:addOnModuleId/checkout')
+  async createAddOnCheckout(
+    @CurrentUser() user: RequestUser,
+    @Param('addOnModuleId') addOnModuleId: string,
+    @Body() dto: CreateAddOnCheckoutDto,
+  ) {
+    return this.payments.createAddOnCheckoutSession(user.tenantId, addOnModuleId, dto.gateway, dto.currency);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('addons/:addOnModuleId/cancel')
+  async cancelAddOn(@CurrentUser() user: RequestUser, @Param('addOnModuleId') addOnModuleId: string) {
+    await this.payments.cancelAddOn(user.tenantId, addOnModuleId);
     return { cancelled: true };
   }
 }

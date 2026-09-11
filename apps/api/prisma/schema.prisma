@@ -53,6 +53,7 @@ enum StockMovementReason {
   RETURN
   DAMAGE
   TRANSFER
+  EXCHANGE
 }
 
 enum InvoiceStatus {
@@ -121,6 +122,7 @@ model Tenant {
   promotions             Promotion[]
   dailySalesSummaries    DailySalesSummary[]
   productSalesSummaries  ProductSalesSummary[]
+  variantSalesSummaries  VariantSalesSummary[]
   purchaseOrders         PurchaseOrder[]
   purchaseOrderItems     PurchaseOrderItem[]
   goodsReceivedNotes     GoodsReceivedNote[]
@@ -228,6 +230,7 @@ model Product {
   stockMovements         StockMovement[]
   invoiceItems           InvoiceItem[]
   productSalesSummaries  ProductSalesSummary[]
+  variantSalesSummaries  VariantSalesSummary[]
   purchaseOrderItems     PurchaseOrderItem[]
   goodsReceivedNoteItems GoodsReceivedNoteItem[]
   warrantyClaims         WarrantyClaim[]
@@ -255,8 +258,10 @@ model ProductVariant {
   stockMovements         StockMovement[]
   invoiceItems           InvoiceItem[]
   goodsReceivedNoteItems GoodsReceivedNoteItem[]
+  variantSalesSummaries  VariantSalesSummary[]
 
   @@index([tenantId, barcode], name: "idx_variants_tenant_barcode")
+  @@index([tenantId, productId])
   @@map("product_variants")
 }
 
@@ -464,6 +469,32 @@ model ProductSalesSummary {
   @@index([tenantId, date])
   @@index([tenantId, productId])
   @@map("product_sales_summaries")
+}
+
+// Variant-level breakdown of ProductSalesSummary, for verticals (textile)
+// that sell the same product as multiple size/color variants. `profit` is
+// necessarily uniform per unit within a product — ProductVariant has no own
+// `cost` column — stored for shape-consistency with ProductSalesSummary, not
+// as true per-variant margin.
+model VariantSalesSummary {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  productId String   @map("product_id")
+  variantId String   @map("variant_id")
+  date      DateTime @db.Date
+  qtySold   Decimal  @default(0) @map("qty_sold") @db.Decimal(12, 3)
+  revenue   Decimal  @default(0) @db.Decimal(14, 2)
+  profit    Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, variantId, date])
+  @@index([tenantId, productId, date])
+  @@map("variant_sales_summaries")
 }
 
 // ─── Restaurant ──────────────────────────────────────────────────────────────
@@ -1028,20 +1059,24 @@ model Subscription {
 // RLS enabled. Unused at launch (see AddOnModule) — schema ready for the
 // next vertical.
 model SubscriptionAddOn {
-  id                       String    @id @default(cuid())
-  tenantId                 String    @map("tenant_id")
-  subscriptionId           String    @map("subscription_id")
-  addOnModuleId            String    @map("addon_module_id")
-  status                   String    @default("ACTIVE") // ACTIVE | CANCELLED
-  activatedAt              DateTime  @default(now()) @map("activated_at")
-  cancelledAt              DateTime? @map("cancelled_at")
-  stripeSubscriptionItemId String?   @map("stripe_subscription_item_id")
-  paypalSubscriptionId     String?   @map("paypal_subscription_id")
+  id                   String    @id @default(cuid())
+  tenantId             String    @map("tenant_id")
+  subscriptionId       String    @map("subscription_id")
+  addOnModuleId        String    @map("addon_module_id")
+  status               String    @default("ACTIVE") // ACTIVE | CANCELLED
+  activatedAt          DateTime  @default(now()) @map("activated_at")
+  cancelledAt          DateTime? @map("cancelled_at")
+  // Each add-on purchase creates its own independent gateway subscription
+  // (not a "subscription item" on the tenant's main plan subscription) —
+  // see PaymentsService.createAddOnCheckoutSession.
+  stripeSubscriptionId String?   @map("stripe_subscription_id")
+  paypalSubscriptionId String?   @map("paypal_subscription_id")
 
   tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   addOnModule  AddOnModule  @relation(fields: [addOnModuleId], references: [id])
 
+  @@unique([tenantId, addOnModuleId])
   @@index([tenantId, status])
   @@map("subscription_addons")
 }

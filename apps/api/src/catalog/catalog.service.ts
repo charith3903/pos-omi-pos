@@ -64,9 +64,9 @@ export class CatalogService {
 
   async listProducts(
     tenantId: string,
-    opts: { search?: string; categoryId?: string; page?: number; limit?: number },
+    opts: { search?: string; categoryId?: string; season?: string; page?: number; limit?: number },
   ) {
-    const { search, categoryId, page = 1, limit = 30 } = opts;
+    const { search, categoryId, season, page = 1, limit = 30 } = opts;
     return this.prisma.withTenant(tenantId, async (tx) => {
       const where = {
         ...(search && {
@@ -77,6 +77,7 @@ export class CatalogService {
           ],
         }),
         ...(categoryId && { categoryId }),
+        ...(season && { attributes: { path: ['season'], equals: season } }),
       };
 
       const [rawItems, total] = await Promise.all([

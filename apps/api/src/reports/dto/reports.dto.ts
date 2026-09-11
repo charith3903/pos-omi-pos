@@ -32,6 +32,19 @@ export class TopProductsDto extends DateRangeDto {
   limit?: number = 10;
 }
 
+export class VariantPerformanceDto extends DateRangeDto {
+  @IsOptional()
+  @IsEnum(['revenue', 'qty', 'profit'])
+  metric?: 'revenue' | 'qty' | 'profit' = 'revenue';
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  limit?: number = 20;
+}
+
 export class SlowMoversDto {
   @IsOptional()
   @Transform(({ value }) => Number(value))
