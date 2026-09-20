@@ -105,12 +105,14 @@ class SyncService {
       final variants = (res['variants'] as List? ?? []).cast<Map<String, dynamic>>();
       final categories = (res['categories'] as List? ?? []).cast<Map<String, dynamic>>();
       final customers = (res['customers'] as List? ?? []).cast<Map<String, dynamic>>();
+      final batches = (res['batches'] as List? ?? []).cast<Map<String, dynamic>>();
       final cursor = res['cursor'] as String?;
 
       if (products.isNotEmpty) await db.upsertProductsFromJson(products);
       if (variants.isNotEmpty) await db.upsertVariantsFromJson(variants);
       if (categories.isNotEmpty) await db.upsertCategoriesFromJson(categories);
       if (customers.isNotEmpty) await db.upsertCustomersFromJson(customers);
+      if (batches.isNotEmpty) await db.upsertBatchesFromJson(batches);
       if (cursor != null) await db.setMeta('sync_cursor', cursor);
     } on AuthException {
       // handled in push; don't double-report

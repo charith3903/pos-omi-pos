@@ -1,10 +1,24 @@
-import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { IsNumber, IsOptional, Min } from 'class-validator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+
+class SetCreditLimitDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  creditLimit?: number | null;
+}
+
+class RecordCreditPaymentDto {
+  @IsNumber()
+  @Min(0.01)
+  amount: number;
+}
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard, SubscriptionGuard)
@@ -33,5 +47,15 @@ export class CustomersController {
     @Body() dto: CreateCustomerDto,
   ) {
     return this.svc.update(u.tenantId, id, dto);
+  }
+
+  @Patch(':id/credit')
+  setCreditLimit(@CurrentUser() u: RequestUser, @Param('id') id: string, @Body() dto: SetCreditLimitDto) {
+    return this.svc.setCreditLimit(u.tenantId, id, dto.creditLimit ?? null);
+  }
+
+  @Post(':id/credit-payments')
+  recordCreditPayment(@CurrentUser() u: RequestUser, @Param('id') id: string, @Body() dto: RecordCreditPaymentDto) {
+    return this.svc.recordCreditPayment(u.tenantId, id, dto.amount);
   }
 }

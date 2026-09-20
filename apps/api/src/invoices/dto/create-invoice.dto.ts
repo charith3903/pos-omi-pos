@@ -19,6 +19,11 @@ class InvoiceItemDto {
   @IsString()
   variantId?: string;
 
+  /** Cashier-picked batch (POS batch picker) — draws from it first, then falls back to FIFO. */
+  @IsOptional()
+  @IsString()
+  batchId?: string;
+
   @IsString()
   nameSnapshot: string;
 
@@ -73,6 +78,16 @@ export class CreateInvoiceDto {
   @IsOptional()
   @IsString()
   customerId?: string;
+
+  /** Tags which user made the sale — independent of the logged-in cashier. */
+  @IsOptional()
+  @IsString()
+  salesmanId?: string;
+
+  /** "Bill Note" — free text kept with the invoice. */
+  @IsOptional()
+  @IsString()
+  notes?: string;
 
   @IsNumber()
   @Min(0)

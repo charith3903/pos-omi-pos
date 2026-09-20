@@ -104,6 +104,48 @@ class ProductVariantData {
   String get label => attributes.values.where((v) => v != null && '$v'.isNotEmpty).join(' / ');
 }
 
+/// A GRN receipt line — "batch" is the batch-wise stock/cost/price unit.
+/// [qtyRemaining] is what's left to sell from this batch; [receivedAt] is
+/// the GRN's date, used to sort oldest-first (FIFO) independent of
+/// [updatedAt] (which changes every time the batch is sold from).
+class BatchData {
+  final String id;
+  final String productId;
+  final String? variantId;
+  final String? batchNo;
+  final double qtyRemaining;
+  final double? unitCost;
+  final double? sellingPrice;
+  final DateTime? expiryDate;
+  final DateTime receivedAt;
+
+  const BatchData({
+    required this.id,
+    required this.productId,
+    this.variantId,
+    this.batchNo,
+    required this.qtyRemaining,
+    this.unitCost,
+    this.sellingPrice,
+    this.expiryDate,
+    required this.receivedAt,
+  });
+
+  factory BatchData.fromMap(Map<String, dynamic> m) => BatchData(
+        id: m['id'] as String,
+        productId: m['product_id'] as String,
+        variantId: m['variant_id'] as String?,
+        batchNo: m['batch_no'] as String?,
+        qtyRemaining: (m['qty_remaining'] as num).toDouble(),
+        unitCost: (m['unit_cost'] as num?)?.toDouble(),
+        sellingPrice: (m['selling_price'] as num?)?.toDouble(),
+        expiryDate: m['expiry_date'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(m['expiry_date'] as int)
+            : null,
+        receivedAt: DateTime.fromMillisecondsSinceEpoch(m['received_at'] as int),
+      );
+}
+
 class InvoiceItemInput {
   final String productId;
   final String nameSnapshot;
@@ -112,6 +154,8 @@ class InvoiceItemInput {
   final double discount;
   final double tax;
   final double lineTotal;
+  /// Cashier-picked batch (POS batch picker) — null means "let the server pick FIFO".
+  final String? batchId;
 
   const InvoiceItemInput({
     required this.productId,
@@ -121,6 +165,7 @@ class InvoiceItemInput {
     this.discount = 0,
     this.tax = 0,
     required this.lineTotal,
+    this.batchId,
   });
 }
 
@@ -178,7 +223,7 @@ class AppDatabase {
     if (_db != null) return _db!;
     _db = await openDatabase(
       join(await getDatabasesPath(), 'omnipos_local.db'),
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -230,7 +275,15 @@ class AppDatabase {
         product_id TEXT NOT NULL, name_snapshot TEXT NOT NULL,
         qty REAL NOT NULL, unit_price REAL NOT NULL,
         discount REAL NOT NULL DEFAULT 0,
-        tax REAL NOT NULL DEFAULT 0, line_total REAL NOT NULL
+        tax REAL NOT NULL DEFAULT 0, line_total REAL NOT NULL,
+        batch_id TEXT
+      )''');
+    b.execute('''
+      CREATE TABLE IF NOT EXISTS batches (
+        id TEXT PRIMARY KEY, product_id TEXT NOT NULL, variant_id TEXT,
+        batch_no TEXT, qty_remaining REAL NOT NULL,
+        unit_cost REAL, selling_price REAL, expiry_date INTEGER,
+        received_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
       )''');
     b.execute('''
       CREATE TABLE IF NOT EXISTS local_payments (
@@ -264,6 +317,7 @@ class AppDatabase {
     b.execute('CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_items(status)');
     b.execute('CREATE INDEX IF NOT EXISTS idx_variants_barcode ON product_variants(barcode)');
     b.execute('CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id)');
+    b.execute('CREATE INDEX IF NOT EXISTS idx_batches_product_variant ON batches(product_id, variant_id)');
     await b.commit(noResult: true);
   }
 
@@ -285,6 +339,21 @@ class AppDatabase {
         )''');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_variants_barcode ON product_variants(barcode)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id)');
+    }
+    if (oldVersion < 3) {
+      try {
+        await db.execute('ALTER TABLE local_invoice_items ADD COLUMN batch_id TEXT');
+      } catch (_) {
+        // Column already exists.
+      }
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS batches (
+          id TEXT PRIMARY KEY, product_id TEXT NOT NULL, variant_id TEXT,
+          batch_no TEXT, qty_remaining REAL NOT NULL,
+          unit_cost REAL, selling_price REAL, expiry_date INTEGER,
+          received_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        )''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_batches_product_variant ON batches(product_id, variant_id)');
     }
   }
 
@@ -347,6 +416,24 @@ class AppDatabase {
     return rows.isEmpty ? null : ProductVariantData.fromMap(rows.first);
   }
 
+  // ── Batch queries ────────────────────────────────────────────────────────
+
+  /// Available batches for a product (or a specific variant), oldest
+  /// received first — the FIFO order the batch picker defaults to.
+  /// [variantId] null means "the base product, no variant chosen".
+  Future<List<BatchData>> batchesForVariant(String productId, String? variantId) async {
+    final db = await _open;
+    final rows = await db.query(
+      'batches',
+      where: variantId != null
+          ? 'product_id = ? AND variant_id = ?'
+          : 'product_id = ? AND variant_id IS NULL',
+      whereArgs: variantId != null ? [productId, variantId] : [productId],
+      orderBy: 'received_at ASC',
+    );
+    return rows.map(BatchData.fromMap).toList();
+  }
+
   // ── Customer queries ─────────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> searchCustomers(String query) async {
@@ -399,6 +486,7 @@ class AppDatabase {
           'discount': item.discount,
           'tax': item.tax,
           'line_total': item.lineTotal,
+          'batch_id': item.batchId,
         });
       }
 
@@ -532,6 +620,47 @@ class AppDatabase {
           'stock_qty': (v['stockQty'] as num?)?.toDouble() ?? 0,
           'updated_at':
               DateTime.parse(v['updatedAt'] as String).millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await b.commit(noResult: true);
+  }
+
+  /// A batch with `qtyRemaining <= 0` is deleted locally instead of upserted,
+  /// so [batchesForVariant] only ever returns batches actually available to
+  /// sell — matching what the server considers "available" (see
+  /// SyncService.pull()'s `qtyRemaining: { gt: 0 }` filter... except a batch
+  /// that was available at a previous sync and got fully sold since then
+  /// still needs to be removed here even though the *next* pull's filter
+  /// would otherwise just omit it silently, which would leave the stale row
+  /// behind forever).
+  Future<void> upsertBatchesFromJson(List<Map<String, dynamic>> data) async {
+    final db = await _open;
+    final b = db.batch();
+    for (final batch in data) {
+      final qtyRemaining = (batch['qtyRemaining'] as num?)?.toDouble() ?? 0;
+      if (qtyRemaining <= 0) {
+        b.delete('batches', where: 'id = ?', whereArgs: [batch['id']]);
+        continue;
+      }
+      b.insert(
+        'batches',
+        {
+          'id': batch['id'],
+          'product_id': batch['productId'],
+          'variant_id': batch['variantId'],
+          'batch_no': batch['batchNo'],
+          'qty_remaining': qtyRemaining,
+          'unit_cost': (batch['unitCost'] as num?)?.toDouble(),
+          'selling_price': (batch['sellingPrice'] as num?)?.toDouble(),
+          'expiry_date': batch['expiryDate'] != null
+              ? DateTime.parse(batch['expiryDate'] as String).millisecondsSinceEpoch
+              : null,
+          'received_at':
+              DateTime.parse(batch['receivedAt'] as String).millisecondsSinceEpoch,
+          'updated_at':
+              DateTime.parse(batch['updatedAt'] as String).millisecondsSinceEpoch,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );

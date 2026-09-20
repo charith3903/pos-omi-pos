@@ -27,6 +27,11 @@ export class SyncItemLineDto {
   @IsOptional()
   variantId?: string;
 
+  /** Cashier-picked batch (POS batch picker) — draws from it first, then falls back to FIFO. */
+  @IsString()
+  @IsOptional()
+  batchId?: string;
+
   @IsString()
   nameSnapshot: string;
 

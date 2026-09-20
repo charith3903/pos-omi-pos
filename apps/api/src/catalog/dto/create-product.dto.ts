@@ -19,6 +19,11 @@ class CreateVariantDto {
   price?: number;
 
   @IsOptional()
+  @IsNumber()
+  @Min(0)
+  wholesalePrice?: number;
+
+  @IsOptional()
   @IsString()
   barcode?: string;
 
@@ -46,6 +51,11 @@ export class CreateProductDto {
   @IsNumber()
   @Min(0)
   price: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  wholesalePrice?: number;
 
   @IsOptional()
   @IsNumber()

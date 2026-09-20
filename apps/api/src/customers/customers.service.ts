@@ -43,4 +43,21 @@ export class CustomersService {
       tx.customer.update({ where: { id }, data: dto }),
     );
   }
+
+  /** Sets (or clears, with null) how much credit this customer is approved for. */
+  async setCreditLimit(tenantId: string, id: string, creditLimit: number | null) {
+    await this.getById(tenantId, id);
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.customer.update({ where: { id }, data: { creditLimit } }),
+    );
+  }
+
+  /** Records a collection against an outstanding credit balance — never goes below 0. */
+  async recordCreditPayment(tenantId: string, id: string, amount: number) {
+    const customer = await this.getById(tenantId, id);
+    const nextBalance = Math.max(0, Number(customer.creditBalance) - amount);
+    return this.prisma.withTenant(tenantId, (tx) =>
+      tx.customer.update({ where: { id }, data: { creditBalance: nextBalance } }),
+    );
+  }
 }

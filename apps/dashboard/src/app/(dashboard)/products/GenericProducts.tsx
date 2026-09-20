@@ -283,9 +283,14 @@ function VariantsModal({ product, onClose }: { product: Product; onClose: () => 
               {variants.map((v) => {
                 const a = v.attributes ?? {};
                 return (
-                  <div key={v.id} className="flex justify-between items-center px-3 py-2 text-sm">
+                  <div key={v.id} className="flex justify-between items-center px-3 py-2 text-sm gap-3">
                     <span className="text-gray-800">{[a.size, a.color].filter(Boolean).join(' / ')}</span>
                     <span className="text-gray-400 font-mono text-xs">{v.barcode ?? '—'}</span>
+                    {v.cost != null && (
+                      <span className="text-gray-500 text-xs" title="Cost from the newest GRN batch received for this variant">
+                        Cost: LKR {Number(v.cost).toFixed(2)}
+                      </span>
+                    )}
                     <span className="text-primary-700 font-medium">LKR {Number(v.price ?? product.price).toFixed(2)}</span>
                   </div>
                 );

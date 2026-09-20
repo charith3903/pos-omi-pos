@@ -41,6 +41,8 @@ class VerticalPack {
   final double defaultTaxRate;
   final String receiptTemplate;
   final List<String> searchFilterKeys;
+  /// 'MODERN' or 'TRADITIONAL' — which BillingScreen layout to render.
+  final String posViewMode;
 
   const VerticalPack({
     required this.businessType,
@@ -50,6 +52,7 @@ class VerticalPack {
     required this.defaultTaxRate,
     required this.receiptTemplate,
     required this.searchFilterKeys,
+    this.posViewMode = 'TRADITIONAL',
   });
 
   factory VerticalPack.fromMap(Map<String, dynamic> m) => VerticalPack(
@@ -63,6 +66,7 @@ class VerticalPack {
         defaultTaxRate: (m['defaultTaxRate'] as num?)?.toDouble() ?? 0.0,
         receiptTemplate: m['receiptTemplate'] as String? ?? 'standard',
         searchFilterKeys: (m['searchFilterKeys'] as List?)?.cast<String>() ?? [],
+        posViewMode: m['posViewMode'] as String? ?? 'TRADITIONAL',
       );
 
   factory VerticalPack.fromJson(String json) =>
@@ -87,6 +91,7 @@ class VerticalPack {
         'defaultTaxRate': defaultTaxRate,
         'receiptTemplate': receiptTemplate,
         'searchFilterKeys': searchFilterKeys,
+        'posViewMode': posViewMode,
       });
 
   /// Convenience label lookup with fallback

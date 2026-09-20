@@ -128,6 +128,13 @@ export interface VerticalPack {
   defaultTaxRate: number;
   receiptTemplate: 'standard' | 'spare_parts' | 'restaurant' | 'mobile' | 'rental';
   searchFilterKeys: string[];
+  /**
+   * POS screen layout for the tenant's default outlet — see OutletSettings.
+   * Optional so the static per-business-type pack literals (registry.ts)
+   * don't all need updating; VerticalService fills this in per-tenant at
+   * request time. Absent = treat as 'TRADITIONAL'.
+   */
+  posViewMode?: 'MODERN' | 'TRADITIONAL';
 }
 
 // ─── Billing & Subscriptions ──────────────────────────────────────────────────

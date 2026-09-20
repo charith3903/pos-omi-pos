@@ -30,6 +30,10 @@ import { LoyaltyModule } from './loyalty/loyalty.module';
 import { ShiftsModule } from './shifts/shifts.module';
 import { BillingModule } from './billing/billing.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { PosSettingsModule } from './pos-settings/pos-settings.module';
+import { QuotationsModule } from './quotations/quotations.module';
+import { HeldSalesModule } from './held-sales/held-sales.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -67,6 +71,10 @@ import { NotificationsModule } from './notifications/notifications.module';
     ShiftsModule,
     BillingModule,
     NotificationsModule,
+    PosSettingsModule,
+    QuotationsModule,
+    HeldSalesModule,
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

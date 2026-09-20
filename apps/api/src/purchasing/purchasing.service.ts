@@ -12,6 +12,13 @@ interface GrnItemInput {
   expiryDate?: string;
 }
 
+interface PoItemInput {
+  productId: string;
+  variantId?: string;
+  qty: number;
+  unitPrice: number;
+}
+
 @Injectable()
 export class PurchasingService {
   constructor(
@@ -37,12 +44,13 @@ export class PurchasingService {
       const number = `PO-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
 
       let total = 0;
-      const poItems = items.map((item) => {
+      const poItems = (items as PoItemInput[]).map((item) => {
         const lineTotal = item.qty * item.unitPrice;
         total += lineTotal;
         return {
           tenantId,
           productId: item.productId,
+          variantId: item.variantId ?? null,
           qty: item.qty,
           unitPrice: item.unitPrice,
           total: lineTotal,
@@ -152,6 +160,18 @@ export class PurchasingService {
             data: { price: grnItem.sellingPrice },
           });
         }
+      }
+
+      // New batch's unit cost becomes the variant's "current cost" cache —
+      // symmetric with the price push-back above. Product.cost is left alone
+      // when there's no variant (no equivalent "newest batch" convention was
+      // requested for base products, only for textile variants).
+      for (const grnItem of created.items) {
+        if (!grnItem.variantId) continue;
+        await tx.productVariant.update({
+          where: { id: grnItem.variantId },
+          data: { cost: grnItem.unitCost },
+        });
       }
 
       return created;

@@ -1,18 +1,26 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { VerticalField, VerticalPack } from '@omnipos/types';
 import { PrismaService } from '../prisma/prisma.service';
+import { PosSettingsService } from '../pos-settings/pos-settings.service';
 import { getPackForBusinessType } from './packs/registry';
 
 @Injectable()
 export class VerticalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly posSettings: PosSettingsService,
+  ) {}
 
   async getPackForTenant(tenantId: string): Promise<VerticalPack> {
     const rows = await this.prisma.$queryRaw<[{ business_type: string }]>`
       SELECT business_type FROM tenants WHERE id = ${tenantId} LIMIT 1
     `;
     const businessType = rows[0]?.business_type ?? 'DEFAULT';
-    return getPackForBusinessType(businessType);
+    const pack = getPackForBusinessType(businessType);
+    // POS-view-mode is per-outlet, not per-business-type, so it's resolved
+    // fresh per tenant here rather than baked into the static pack literals.
+    const posViewMode = await this.posSettings.getForDefaultOutlet(tenantId);
+    return { ...pack, posViewMode };
   }
 
   /**

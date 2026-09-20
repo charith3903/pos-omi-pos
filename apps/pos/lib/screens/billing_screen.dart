@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../data/database.dart';
 import '../services/sync_service.dart';
 import '../services/vertical_service.dart';
+import '../widgets/pos_shortcuts.dart';
 import '../widgets/sync_status_badge.dart';
 
 const _uuid = Uuid();
@@ -21,6 +22,9 @@ class CartLine {
   final double taxRate;
   // Searchable attribute values snapshot for receipt display
   final Map<String, dynamic> attributes;
+  /// Cashier-picked batch (POS batch picker) — null means "let the server pick FIFO".
+  final String? batchId;
+  final String? batchLabel;
 
   CartLine({
     required this.productId,
@@ -31,6 +35,8 @@ class CartLine {
     required this.unitPrice,
     required this.taxRate,
     this.attributes = const {},
+    this.batchId,
+    this.batchLabel,
   });
 
   double get lineTotal => qty * unitPrice;
@@ -64,6 +70,12 @@ class _BillingScreenState extends State<BillingScreen> {
   String? _postError;
   Map<String, dynamic>? _lastReceipt;
 
+  // ── Keyboard-only operation ────────────────────────────────────────────
+  final _searchFocusNode = FocusNode();
+  final _discountFocusNode = FocusNode();
+  final _cartFocusNode = FocusNode();
+  int _selectedCartIndex = -1;
+
   double get _subtotal => _cart.fold(0, (s, l) => s + l.lineTotal);
   double get _discount => _cartDiscount.clamp(0, _subtotal);
   double get _tax => _cart.fold(0, (s, l) => s + l.lineTax);
@@ -71,10 +83,14 @@ class _BillingScreenState extends State<BillingScreen> {
   double get _cashGiven => double.tryParse(_cashController.text) ?? 0;
   double get _change => (_cashGiven - _total).clamp(0, double.infinity);
 
-  void _addProduct(ProductData p, [ProductVariantData? variant]) {
+  void _addProduct(ProductData p, [ProductVariantData? variant, BatchData? batch]) {
     setState(() {
-      final key = variant?.id ?? p.id;
-      final idx = _cart.indexWhere((l) => (l.variantId ?? l.productId) == key);
+      // Different batches of the same variant are kept as separate cart
+      // lines — they can carry different cost/selling price.
+      final key = '${variant?.id ?? p.id}::${batch?.id ?? ''}';
+      final idx = _cart.indexWhere(
+        (l) => '${l.variantId ?? l.productId}::${l.batchId ?? ''}' == key,
+      );
       if (idx >= 0) {
         _cart[idx].qty++;
       } else {
@@ -84,9 +100,13 @@ class _BillingScreenState extends State<BillingScreen> {
           variantLabel: variant?.label,
           name: p.name,
           qty: 1,
-          unitPrice: variant?.price ?? p.price,
+          // A picked batch's own selling price wins (it may predate the
+          // variant's current price); otherwise variant/product price.
+          unitPrice: batch?.sellingPrice ?? variant?.price ?? p.price,
           taxRate: p.taxRate,
           attributes: p.attributes,
+          batchId: batch?.id,
+          batchLabel: batch?.batchNo,
         ));
       }
     });
@@ -96,13 +116,71 @@ class _BillingScreenState extends State<BillingScreen> {
     setState(() => _cart[idx].qty = (_cart[idx].qty + delta).clamp(1, 9999));
   }
 
-  void _removeLine(int idx) => setState(() => _cart.removeAt(idx));
+  void _removeLine(int idx) => setState(() {
+        _cart.removeAt(idx);
+        if (_selectedCartIndex >= _cart.length) {
+          _selectedCartIndex = _cart.length - 1;
+        }
+      });
+
+  // ── Keyboard-only cart operation ─────────────────────────────────────────
+  // Mirrors the mouse controls above (_updateQty/_removeLine) so the two
+  // input methods can never drift out of sync — the keyboard just picks
+  // which line those same methods apply to.
+
+  void _selectCartLine(int idx) => setState(() => _selectedCartIndex = idx);
+
+  void _focusSearch() => _searchFocusNode.requestFocus();
+  void _focusDiscount() => _discountFocusNode.requestFocus();
+
+  void _focusCart() {
+    if (_cart.isEmpty) return;
+    setState(() {
+      if (_selectedCartIndex < 0 || _selectedCartIndex >= _cart.length) {
+        _selectedCartIndex = _cart.length - 1;
+      }
+    });
+    _cartFocusNode.requestFocus();
+  }
+
+  void _moveCartSelection(int delta) {
+    if (_cart.isEmpty) return;
+    setState(() {
+      final base = _selectedCartIndex < 0 ? 0 : _selectedCartIndex;
+      _selectedCartIndex = (base + delta).clamp(0, _cart.length - 1);
+    });
+  }
+
+  void _stepSelectedQty(int delta) {
+    if (_selectedCartIndex < 0 || _selectedCartIndex >= _cart.length) return;
+    _updateQty(_selectedCartIndex, delta);
+  }
+
+  void _removeSelectedLine() {
+    if (_selectedCartIndex < 0 || _selectedCartIndex >= _cart.length) return;
+    final removedIdx = _selectedCartIndex;
+    _removeLine(removedIdx);
+    setState(() {
+      if (_cart.isEmpty) {
+        _selectedCartIndex = -1;
+      } else {
+        _selectedCartIndex = removedIdx.clamp(0, _cart.length - 1);
+      }
+    });
+  }
+
+  void _setPayMethod(String m) => setState(() => _payMethod = m);
+
+  void _showShortcutsHelp() {
+    showDialog(context: context, builder: (_) => const PosShortcutsHelpDialog());
+  }
 
   void _clearCart() => setState(() {
         _cart.clear();
         _cartDiscount = 0;
         _cashController.clear();
         _postError = null;
+        _selectedCartIndex = -1;
       });
 
   Future<void> _checkout() async {
@@ -133,6 +211,7 @@ class _BillingScreenState extends State<BillingScreen> {
                 unitPrice: l.unitPrice,
                 tax: l.lineTax,
                 lineTotal: l.lineTotal,
+                batchId: l.batchId,
               ))
           .toList();
 
@@ -165,6 +244,7 @@ class _BillingScreenState extends State<BillingScreen> {
             .map((l) => {
                   'productId': l.productId,
                   if (l.variantId != null) 'variantId': l.variantId,
+                  if (l.batchId != null) 'batchId': l.batchId,
                   'nameSnapshot': _buildNameSnapshot(l, pack.searchFilterKeys),
                   'qty': l.qty,
                   'unitPrice': l.unitPrice,
@@ -244,67 +324,99 @@ class _BillingScreenState extends State<BillingScreen> {
   @override
   Widget build(BuildContext context) {
     final pack = widget.vertical.pack;
-    return Scaffold(
-      appBar: AppBar(
-        // Pack-driven title: shows "OmniPOS — Parts" for spare parts
-        title: Text(pack.businessType == 'DEFAULT'
-            ? 'OmniPOS'
-            : 'OmniPOS — ${pack.label('products', pack.businessType)}'),
-        backgroundColor: const Color(0xFF1E3A8A),
-        foregroundColor: Colors.white,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Center(child: SyncStatusBadge(syncService: widget.sync)),
-          ),
-        ],
+    final modern = pack.posViewMode == 'MODERN';
+
+    final cartPanel = PosCartShortcuts(
+      focusNode: _cartFocusNode,
+      onLineUp: () => _moveCartSelection(-1),
+      onLineDown: () => _moveCartSelection(1),
+      onQtyIncrement: () => _stepSelectedQty(1),
+      onQtyDecrement: () => _stepSelectedQty(-1),
+      onRemoveLine: _removeSelectedLine,
+      onPayMethod: _setPayMethod,
+      child: _CartPanel(
+        cart: _cart,
+        vertical: widget.vertical,
+        discount: _cartDiscount,
+        subtotal: _subtotal,
+        discountAmt: _discount,
+        tax: _tax,
+        total: _total,
+        payMethod: _payMethod,
+        cashController: _cashController,
+        cashGiven: _cashGiven,
+        change: _change,
+        posting: _posting,
+        error: _postError,
+        modern: modern,
+        discountFocusNode: _discountFocusNode,
+        selectedIndex: _selectedCartIndex,
+        onSelectIndex: _selectCartLine,
+        onDiscountChanged: (v) => setState(() => _cartDiscount = v),
+        onPayMethodChanged: _setPayMethod,
+        onQtyDelta: _updateQty,
+        onRemove: _removeLine,
+        onClear: _clearCart,
+        onCheckout: _checkout,
       ),
-      body: Row(
-        children: [
-          Expanded(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: _ProductSearch(
-                    db: widget.db,
-                    vertical: widget.vertical,
-                    onProductSelected: _addProduct,
-                  ),
-                ),
-                if (_lastReceipt != null)
-                  _ReceiptBanner(
-                    receipt: _lastReceipt!,
-                    onDismiss: () => setState(() => _lastReceipt = null),
-                  ),
-              ],
+    );
+
+    return PosGlobalShortcuts(
+      onFocusSearch: _focusSearch,
+      onFocusCart: _focusCart,
+      onFocusDiscount: _focusDiscount,
+      onCheckout: _checkout,
+      onShowHelp: _showShortcutsHelp,
+      child: Scaffold(
+        backgroundColor: modern ? const Color(0xFFF8FAFC) : null,
+        appBar: AppBar(
+          // Pack-driven title: shows "OmniPOS — Parts" for spare parts
+          title: Text(pack.businessType == 'DEFAULT'
+              ? 'OmniPOS'
+              : 'OmniPOS — ${pack.label('products', pack.businessType)}'),
+          backgroundColor: const Color(0xFF1E3A8A),
+          foregroundColor: Colors.white,
+          actions: [
+            IconButton(
+              tooltip: 'Keyboard shortcuts (F1)',
+              icon: const Icon(Icons.keyboard),
+              onPressed: _showShortcutsHelp,
             ),
-          ),
-          SizedBox(
-            width: 340,
-            child: _CartPanel(
-              cart: _cart,
-              vertical: widget.vertical,
-              discount: _cartDiscount,
-              subtotal: _subtotal,
-              discountAmt: _discount,
-              tax: _tax,
-              total: _total,
-              payMethod: _payMethod,
-              cashController: _cashController,
-              cashGiven: _cashGiven,
-              change: _change,
-              posting: _posting,
-              error: _postError,
-              onDiscountChanged: (v) => setState(() => _cartDiscount = v),
-              onPayMethodChanged: (m) => setState(() => _payMethod = m),
-              onQtyDelta: _updateQty,
-              onRemove: _removeLine,
-              onClear: _clearCart,
-              onCheckout: _checkout,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Center(child: SyncStatusBadge(syncService: widget.sync)),
             ),
-          ),
-        ],
+          ],
+        ),
+        body: Row(
+          children: [
+            Expanded(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: EdgeInsets.all(modern ? 16 : 12),
+                    child: _ProductSearch(
+                      db: widget.db,
+                      vertical: widget.vertical,
+                      onProductSelected: _addProduct,
+                      gridMode: modern,
+                      focusNode: _searchFocusNode,
+                    ),
+                  ),
+                  if (_lastReceipt != null)
+                    _ReceiptBanner(
+                      receipt: _lastReceipt!,
+                      onDismiss: () => setState(() => _lastReceipt = null),
+                    ),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: modern ? 420 : 340,
+              child: cartPanel,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -312,6 +424,9 @@ class _BillingScreenState extends State<BillingScreen> {
   @override
   void dispose() {
     _cashController.dispose();
+    _searchFocusNode.dispose();
+    _discountFocusNode.dispose();
+    _cartFocusNode.dispose();
     super.dispose();
   }
 }
@@ -321,12 +436,18 @@ class _BillingScreenState extends State<BillingScreen> {
 class _ProductSearch extends StatefulWidget {
   final AppDatabase db;
   final VerticalService vertical;
-  final void Function(ProductData product, ProductVariantData? variant) onProductSelected;
+  final void Function(ProductData product, ProductVariantData? variant, [BatchData? batch]) onProductSelected;
+  /// Modern view renders results as a tappable card grid instead of a list —
+  /// bigger touch targets, same underlying search/selection logic.
+  final bool gridMode;
+  final FocusNode? focusNode;
 
   const _ProductSearch({
     required this.db,
     required this.vertical,
     required this.onProductSelected,
+    this.gridMode = false,
+    this.focusNode,
   });
 
   @override
@@ -354,6 +475,27 @@ class _ProductSearchState extends State<_ProductSearch> {
     });
   }
 
+  /// Resolves which batch a sale should draw from, given a product/variant:
+  ///  - no batches (legacy stock, or GRN never ran) → null, sell unbatched.
+  ///  - exactly one batch → use it silently, no extra tap for the cashier.
+  ///  - multiple batches → show the picker so the cashier can see qty/cost/
+  ///    price/expiry per batch and override the FIFO default if they want.
+  /// Returns `(batch, cancelled)` — cancelled is true only when the cashier
+  /// dismissed a picker that was actually shown, so callers can abort the
+  /// add-to-cart in that case (matches the variant picker's cancel behavior).
+  Future<(BatchData?, bool)> _resolveBatch(String productId, String? variantId) async {
+    final batches = await widget.db.batchesForVariant(productId, variantId);
+    if (batches.isEmpty) return (null, false);
+    if (batches.length == 1) return (batches.first, false);
+    if (!mounted) return (batches.first, false);
+    final chosen = await showModalBottomSheet<BatchData>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _BatchPickerSheet(batches: batches),
+    );
+    return (chosen, chosen == null);
+  }
+
   /// Scanning/typing a variant's own barcode goes straight to cart, skipping
   /// the picker — the app's existing hardware-scanner-into-text-field
   /// convention, extended to variants.
@@ -363,7 +505,9 @@ class _ProductSearchState extends State<_ProductSearch> {
     if (variant != null) {
       final product = await widget.db.getProductById(variant.productId);
       if (product != null) {
-        widget.onProductSelected(product, variant);
+        final (batch, cancelled) = await _resolveBatch(product.id, variant.id);
+        if (cancelled) return;
+        widget.onProductSelected(product, variant, batch);
         _ctrl.clear();
         setState(() => _results = []);
         return;
@@ -371,7 +515,9 @@ class _ProductSearchState extends State<_ProductSearch> {
     }
     final p = await widget.db.findByBarcode(trimmed);
     if (p != null) {
-      widget.onProductSelected(p, null);
+      final (batch, cancelled) = await _resolveBatch(p.id, null);
+      if (cancelled) return;
+      widget.onProductSelected(p, null, batch);
       _ctrl.clear();
       setState(() => _results = []);
     }
@@ -390,15 +536,28 @@ class _ProductSearchState extends State<_ProductSearch> {
           builder: (ctx) => _VariantPickerSheet(product: p, variants: variants),
         );
         if (chosen == null) return; // cancelled — leave search results as-is
-        widget.onProductSelected(p, chosen);
+        final (batch, cancelled) = await _resolveBatch(p.id, chosen.id);
+        if (cancelled) return;
+        widget.onProductSelected(p, chosen, batch);
         _ctrl.clear();
         setState(() => _results = []);
         return;
       }
     }
-    widget.onProductSelected(p, null);
+    final (batch, cancelled) = await _resolveBatch(p.id, null);
+    if (cancelled) return;
+    widget.onProductSelected(p, null, batch);
     _ctrl.clear();
     setState(() => _results = []);
+  }
+
+  String _subtitleFor(ProductData p, List<String> filterKeys) {
+    final attrParts = filterKeys
+        .map((k) => p.attrString(k))
+        .where((v) => v != null && v.isNotEmpty)
+        .cast<String>()
+        .toList();
+    return attrParts.isNotEmpty ? attrParts.join(' · ') : (p.sku ?? p.barcode ?? '');
   }
 
   @override
@@ -409,58 +568,112 @@ class _ProductSearchState extends State<_ProductSearch> {
       children: [
         TextField(
           controller: _ctrl,
+          focusNode: widget.focusNode,
           decoration: InputDecoration(
             // Pack-driven placeholder
             hintText: pack.label('searchPlaceholder', 'Search or scan barcode…'),
             prefixIcon: const Icon(Icons.search),
             border: const OutlineInputBorder(),
-            isDense: true,
+            isDense: !widget.gridMode,
+            contentPadding: widget.gridMode
+                ? const EdgeInsets.symmetric(horizontal: 16, vertical: 16)
+                : null,
           ),
+          style: widget.gridMode ? const TextStyle(fontSize: 16) : null,
           onChanged: _onChanged,
           onSubmitted: _onSubmit,
           autofocus: true,
         ),
         if (_results.isNotEmpty)
-          Container(
-            constraints: const BoxConstraints(maxHeight: 320),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: Colors.grey.shade300),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: _results.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (ctx, i) {
-                final p = _results[i];
-                // Build subtitle: for spare parts show part_number + vehicle info
-                final attrParts = pack.searchFilterKeys
-                    .map((k) => p.attrString(k))
-                    .where((v) => v != null && v.isNotEmpty)
-                    .cast<String>()
-                    .toList();
-                final subtitle = attrParts.isNotEmpty
-                    ? attrParts.join(' · ')
-                    : (p.sku ?? p.barcode ?? '');
-
-                return ListTile(
-                  dense: true,
-                  title: Text(p.name,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(subtitle,
-                      style: const TextStyle(fontSize: 11)),
-                  trailing: Text(
-                    'LKR ${p.price.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                        color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold),
-                  ),
-                  onTap: () => _selectProduct(p),
-                );
-              },
-            ),
-          ),
+          widget.gridMode ? _buildGrid(pack) : _buildList(pack),
       ],
+    );
+  }
+
+  Widget _buildList(dynamic pack) {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 320),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: ListView.separated(
+        shrinkWrap: true,
+        itemCount: _results.length,
+        separatorBuilder: (_, __) => const Divider(height: 1),
+        itemBuilder: (ctx, i) {
+          final p = _results[i];
+          return ListTile(
+            dense: true,
+            title: Text(p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(_subtitleFor(p, pack.searchFilterKeys), style: const TextStyle(fontSize: 11)),
+            trailing: Text(
+              'LKR ${p.price.toStringAsFixed(2)}',
+              style: const TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold),
+            ),
+            onTap: () => _selectProduct(p),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Modern view: a grid of tappable cards — larger touch targets for
+  /// touchscreen POS terminals, same search/selection logic as the list.
+  Widget _buildGrid(dynamic pack) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 420),
+      child: GridView.builder(
+        shrinkWrap: true,
+        padding: const EdgeInsets.only(top: 12),
+        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: 220,
+          childAspectRatio: 1.3,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+        ),
+        itemCount: _results.length,
+        itemBuilder: (ctx, i) {
+          final p = _results[i];
+          final outOfStock = p.trackStock && p.stockQty <= 0;
+          return Material(
+            color: outOfStock ? const Color(0xFFF1F5F9) : Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            elevation: 1,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: outOfStock ? null : () => _selectProduct(p),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(p.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                    Text(_subtitleFor(p, pack.searchFilterKeys),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('LKR ${p.price.toStringAsFixed(2)}',
+                            style: const TextStyle(color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold, fontSize: 16)),
+                        if (outOfStock)
+                          const Text('Out', style: TextStyle(color: Colors.red, fontSize: 11, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -528,6 +741,77 @@ class _VariantPickerSheet extends StatelessWidget {
   }
 }
 
+// ─── Batch Picker ───────────────────────────────────────────────────────────
+
+/// Bottom sheet listing available batches oldest-received-first (FIFO order).
+/// Only shown when a variant/product has more than one batch — with exactly
+/// one, [_ProductSearchState._resolveBatch] uses it silently. The first
+/// (oldest) row is marked "FIFO" as the recommended default; any row is
+/// tappable to override it.
+class _BatchPickerSheet extends StatelessWidget {
+  final List<BatchData> batches;
+
+  const _BatchPickerSheet({required this.batches});
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Choose a batch', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 4),
+            const Text(
+              'Multiple batches are available — the oldest (FIFO) is recommended.',
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 360),
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: batches.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (ctx, i) {
+                  final b = batches[i];
+                  final isFifo = i == 0;
+                  return ListTile(
+                    dense: true,
+                    leading: isFifo
+                        ? const Icon(Icons.arrow_upward, color: Color(0xFF1D4ED8), size: 18)
+                        : const SizedBox(width: 18),
+                    title: Text(
+                      b.batchNo?.isNotEmpty == true ? b.batchNo! : 'Batch ${i + 1}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      [
+                        '${b.qtyRemaining.toStringAsFixed(0)} left',
+                        if (b.unitCost != null) 'cost LKR ${b.unitCost!.toStringAsFixed(2)}',
+                        if (b.sellingPrice != null) 'price LKR ${b.sellingPrice!.toStringAsFixed(2)}',
+                        if (b.expiryDate != null)
+                          'exp ${b.expiryDate!.toLocal().toString().split(' ').first}',
+                      ].join(' · '),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    trailing: isFifo
+                        ? const Text('FIFO', style: TextStyle(fontSize: 10, color: Color(0xFF1D4ED8), fontWeight: FontWeight.bold))
+                        : null,
+                    onTap: () => Navigator.pop(context, b),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ─── Cart Panel ───────────────────────────────────────────────────────────────
 
 class _CartPanel extends StatelessWidget {
@@ -546,6 +830,14 @@ class _CartPanel extends StatelessWidget {
   final ValueChanged<int> onRemove;
   final VoidCallback onClear;
   final VoidCallback onCheckout;
+  /// Modern view: larger touch targets and a card-style panel — same data/callbacks.
+  final bool modern;
+  final FocusNode? discountFocusNode;
+  /// Keyboard-selected cart line (via F4 + arrows) — highlighted; -1 = none.
+  /// Tapping a row with the mouse also sets this, so keyboard/mouse selection
+  /// never disagree about which line is "active".
+  final int selectedIndex;
+  final ValueChanged<int> onSelectIndex;
 
   const _CartPanel({
     required this.cart,
@@ -567,11 +859,16 @@ class _CartPanel extends StatelessWidget {
     required this.onRemove,
     required this.onClear,
     required this.onCheckout,
+    this.modern = false,
+    this.discountFocusNode,
+    this.selectedIndex = -1,
+    required this.onSelectIndex,
   });
 
   @override
   Widget build(BuildContext context) {
     final pack = vertical.pack;
+    final iconSize = modern ? 28.0 : 18.0;
     return Container(
       color: Colors.white,
       child: Column(
@@ -581,7 +878,7 @@ class _CartPanel extends StatelessWidget {
                 ? Center(
                     child: Text(
                       'Add ${pack.label('products', 'products').toLowerCase()} to begin',
-                      style: const TextStyle(color: Colors.grey),
+                      style: TextStyle(color: Colors.grey, fontSize: modern ? 16 : 14),
                     ),
                   )
                 : ListView.builder(
@@ -596,40 +893,46 @@ class _CartPanel extends StatelessWidget {
                           .firstOrNull;
 
                       return ListTile(
-                        dense: true,
+                        dense: !modern,
+                        selected: i == selectedIndex,
+                        selectedTileColor: const Color(0xFFEFF6FF),
+                        onTap: () => onSelectIndex(i),
+                        contentPadding: modern
+                            ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
+                            : null,
                         title: Text(l.name,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: modern ? 16 : 14),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis),
                         subtitle: Text(
-                          l.variantLabel ?? attrHint ?? 'LKR ${l.unitPrice.toStringAsFixed(2)} each',
-                          style: const TextStyle(fontSize: 11),
+                          [
+                            l.variantLabel ?? attrHint ?? 'LKR ${l.unitPrice.toStringAsFixed(2)} each',
+                            if (l.batchLabel != null) 'batch ${l.batchLabel}',
+                          ].join(' · '),
+                          style: TextStyle(fontSize: modern ? 12 : 11),
                         ),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.remove_circle_outline,
-                                  size: 18),
+                              icon: Icon(Icons.remove_circle_outline, size: iconSize),
                               onPressed: () => onQtyDelta(i, -1),
                             ),
                             Text('${l.qty}',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: modern ? 16 : 14)),
                             IconButton(
-                              icon: const Icon(Icons.add_circle_outline,
-                                  size: 18),
+                              icon: Icon(Icons.add_circle_outline, size: iconSize),
                               onPressed: () => onQtyDelta(i, 1),
                             ),
                             Text(
                               'LKR ${l.lineTotal.toStringAsFixed(2)}',
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1D4ED8)),
+                                  fontSize: modern ? 15 : 14,
+                                  color: const Color(0xFF1D4ED8)),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.close,
-                                  size: 16, color: Colors.grey),
+                              icon: Icon(Icons.close, size: modern ? 20 : 16, color: Colors.grey),
                               onPressed: () => onRemove(i),
                             ),
                           ],
@@ -651,6 +954,7 @@ class _CartPanel extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
+                        focusNode: discountFocusNode,
                         decoration: const InputDecoration(
                           prefixText: 'LKR ',
                           isDense: true,
@@ -739,9 +1043,10 @@ class _CartPanel extends StatelessWidget {
                     posting
                         ? 'Saving…'
                         : 'Charge  LKR ${total.toStringAsFixed(2)}',
+                    style: TextStyle(fontSize: modern ? 17 : 14),
                   ),
                   style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding: EdgeInsets.symmetric(vertical: modern ? 20 : 14),
                     backgroundColor: const Color(0xFF1D4ED8),
                   ),
                 ),

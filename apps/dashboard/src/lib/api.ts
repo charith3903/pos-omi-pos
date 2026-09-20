@@ -303,9 +303,47 @@ export const api = {
     request<any>('/notifications/send', { method: 'POST', body: JSON.stringify(data) }),
   getMessageLogs: (page = 1) => request<{ items: any[]; total: number }>(`/notifications/logs?page=${page}`),
 
+  // ─── POS settings (per outlet) ──────────────────────────────────────────
+  getPosSettings: (outletId: string) =>
+    request<{ outletId: string; posViewMode: 'MODERN' | 'TRADITIONAL' }>(`/outlets/${outletId}/settings`),
+  updatePosSettings: (outletId: string, posViewMode: 'MODERN' | 'TRADITIONAL') =>
+    request<{ outletId: string; posViewMode: 'MODERN' | 'TRADITIONAL' }>(`/outlets/${outletId}/settings`, {
+      method: 'PUT',
+      body: JSON.stringify({ posViewMode }),
+    }),
+
   // ─── Refunds ─────────────────────────────────────────────────────────────
   processRefund: (data: any) =>
     request<any>('/refunds', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── Users (staff — e.g. Salesman picker) ───────────────────────────────
+  getUsers: () => request<{ id: string; name: string; role: string }[]>('/users'),
+
+  // ─── Quotations ──────────────────────────────────────────────────────────
+  getQuotations: () => request<any[]>('/quotations'),
+  getQuotation: (id: string) => request<any>(`/quotations/${id}`),
+  createQuotation: (data: any) =>
+    request<any>('/quotations', { method: 'POST', body: JSON.stringify(data) }),
+  updateQuotationStatus: (id: string, status: string) =>
+    request<any>(`/quotations/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+
+  // ─── Held ("parked") sales ───────────────────────────────────────────────
+  getHeldSales: () => request<any[]>('/held-sales'),
+  holdSale: (data: { outletId?: string; customerId?: string; note?: string; cartSnapshot: any }) =>
+    request<any>('/held-sales', { method: 'POST', body: JSON.stringify(data) }),
+  deleteHeldSale: (id: string) =>
+    request<any>(`/held-sales/${id}`, { method: 'DELETE' }),
+
+  // ─── Cash drawer / expense / paid-out ────────────────────────────────────
+  getCashMovements: (shiftId: string) => request<any[]>(`/shifts/${shiftId}/cash-movements`),
+  addCashMovement: (shiftId: string, data: { type: 'DRAWER_OPEN' | 'PAID_IN' | 'PAID_OUT'; amount: number; reason?: string }) =>
+    request<any>(`/shifts/${shiftId}/cash-movements`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── Customer credit ─────────────────────────────────────────────────────
+  setCustomerCreditLimit: (id: string, creditLimit: number | null) =>
+    request<any>(`/customers/${id}/credit`, { method: 'PATCH', body: JSON.stringify({ creditLimit }) }),
+  recordCreditPayment: (id: string, amount: number) =>
+    request<any>(`/customers/${id}/credit-payments`, { method: 'POST', body: JSON.stringify({ amount }) }),
 
   // ─── Warranty ────────────────────────────────────────────────────────────
   getWarrantyClaims: () => request<{ items: any[]; total: number; page: number; limit: number }>('/warranty'),

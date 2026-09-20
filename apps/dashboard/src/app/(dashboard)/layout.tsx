@@ -42,6 +42,7 @@ import {
   Wine,
   CreditCard,
   Puzzle,
+  Monitor,
 } from 'lucide-react';
 
 const LOCALES: { code: Locale; label: string }[] = [
@@ -76,7 +77,7 @@ function Sidebar() {
     router.replace('/login');
   }
 
-  const EXACT_PATHS = ['/', '/restaurant'];
+  const EXACT_PATHS = ['/dashboard', '/restaurant'];
   const isActive = (href: string) =>
     EXACT_PATHS.includes(href) ? pathname === href : pathname.startsWith(href);
 
@@ -131,7 +132,7 @@ function Sidebar() {
 
       {/* Main nav */}
       <nav className="flex-1 py-4 flex flex-col gap-1 overflow-y-auto">
-        {navItem('/', t('nav.home'), <Home className="w-4 h-4" />)}
+        {navItem('/dashboard', t('nav.home'), <Home className="w-4 h-4" />)}
         {navItem('/billing', isSpareParts ? 'POS / Billing' : isRestaurant ? 'POS / Orders' : t('nav.billing'), <Receipt className="w-4 h-4" />)}
         {navItem('/products', isSpareParts ? 'Parts Catalogue' : isRestaurant ? 'Food' : t('nav.products'), isRestaurant ? <Utensils className="w-4 h-4" /> : <Package className="w-4 h-4" />)}
 
@@ -207,6 +208,7 @@ function Sidebar() {
         {navItem('/account/subscription', 'Subscription & Billing', <CreditCard className="w-4 h-4" />)}
         {navItem('/settings/addons', 'Add-ons Store', <Puzzle className="w-4 h-4" />)}
         {navItem('/settings/messaging', 'Messaging (WhatsApp/SMS)', <MessageCircle className="w-4 h-4" />)}
+        {navItem('/settings/pos-view', 'POS View', <Monitor className="w-4 h-4" />)}
       </nav>
 
       {/* Footer: locale + sign out */}
@@ -238,6 +240,20 @@ function Sidebar() {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  // The POS screen is a dedicated full-screen till, not a dashboard page —
+  // it renders without the sidebar/chrome, like a real terminal application.
+  // "Back Office" inside it just navigates elsewhere to bring the chrome back.
+  const isFullScreenPos = pathname?.startsWith('/billing');
+
+  if (isFullScreenPos) {
+    return (
+      <I18nProvider>
+        <div className="h-screen overflow-hidden">{children}</div>
+      </I18nProvider>
+    );
+  }
+
   return (
     <I18nProvider>
       <div className="flex h-screen bg-gray-50 overflow-hidden">

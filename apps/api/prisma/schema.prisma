@@ -127,8 +127,13 @@ model Tenant {
   purchaseOrderItems     PurchaseOrderItem[]
   goodsReceivedNotes     GoodsReceivedNote[]
   goodsReceivedNoteItems GoodsReceivedNoteItem[]
+  quotations             Quotation[]
+  quotationItems         QuotationItem[]
+  heldSales              HeldSale[]
+  cashMovements          CashMovement[]
   warrantyClaims         WarrantyClaim[]
   notificationSettings   NotificationSettings?
+  outletSettings         OutletSettings[]
   messageLogs            MessageLog[]
   subscription           Subscription?
   subscriptionAddOns     SubscriptionAddOn[]
@@ -149,7 +154,8 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salesInvoices Invoice[]
 
   @@unique([tenantId, email])
   @@map("users")
@@ -165,11 +171,32 @@ model Outlet {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   devices  Device[]
   invoices Invoice[]
+  settings OutletSettings?
 
   @@map("outlets")
+}
+
+enum PosViewMode {
+  MODERN
+  TRADITIONAL
+}
+
+// One row per outlet — POS UI preferences. RLS enabled
+model OutletSettings {
+  id          String      @id @default(cuid())
+  tenantId    String      @map("tenant_id")
+  outletId    String      @unique @map("outlet_id")
+  posViewMode PosViewMode @default(TRADITIONAL) @map("pos_view_mode")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  outlet Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@map("outlet_settings")
 }
 
 // RLS enabled
@@ -210,19 +237,20 @@ model Category {
 
 // RLS enabled
 model Product {
-  id         String   @id @default(cuid())
-  tenantId   String   @map("tenant_id")
-  categoryId String?  @map("category_id")
-  name       String
-  sku        String?
-  barcode    String?
-  price      Decimal  @db.Decimal(12, 2)
-  cost       Decimal? @db.Decimal(12, 2)
-  taxRate    Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4)
-  trackStock Boolean  @default(true) @map("track_stock")
-  attributes Json? // JSONB: flexible product attributes { color, size, ... }
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  categoryId     String?  @map("category_id")
+  name           String
+  sku            String?
+  barcode        String?
+  price          Decimal  @db.Decimal(12, 2)
+  cost           Decimal? @db.Decimal(12, 2)
+  wholesalePrice Decimal? @map("wholesale_price") @db.Decimal(12, 2) // null = same as price (Rate Type: Retail/Wholesale)
+  taxRate        Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4)
+  trackStock     Boolean  @default(true) @map("track_stock")
+  attributes     Json? // JSONB: flexible product attributes { color, size, ... }
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   category               Category?               @relation(fields: [categoryId], references: [id])
@@ -233,6 +261,7 @@ model Product {
   variantSalesSummaries  VariantSalesSummary[]
   purchaseOrderItems     PurchaseOrderItem[]
   goodsReceivedNoteItems GoodsReceivedNoteItem[]
+  quotationItems         QuotationItem[]
   warrantyClaims         WarrantyClaim[]
 
   @@unique([tenantId, sku])
@@ -243,21 +272,25 @@ model Product {
 
 // RLS enabled
 model ProductVariant {
-  id         String   @id @default(cuid())
-  tenantId   String   @map("tenant_id")
-  productId  String   @map("product_id")
-  attributes Json // { "color": "Red", "size": "L" }
-  price      Decimal? @db.Decimal(12, 2) // null = inherit from product
-  barcode    String?
-  sku        String?
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  productId      String   @map("product_id")
+  attributes     Json // { "color": "Red", "size": "L" }
+  price          Decimal? @db.Decimal(12, 2) // null = inherit from product
+  cost           Decimal? @db.Decimal(12, 2) // null = inherit from product; set from newest GRN batch's unitCost
+  wholesalePrice Decimal? @map("wholesale_price") @db.Decimal(12, 2) // null = inherit from product
+  barcode        String?
+  sku            String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   tenant                 Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product                Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
   stockMovements         StockMovement[]
   invoiceItems           InvoiceItem[]
   goodsReceivedNoteItems GoodsReceivedNoteItem[]
+  purchaseOrderItems     PurchaseOrderItem[]
+  quotationItems         QuotationItem[]
   variantSalesSummaries  VariantSalesSummary[]
 
   @@index([tenantId, barcode], name: "idx_variants_tenant_barcode")
@@ -294,18 +327,22 @@ model StockMovement {
 
 // RLS enabled
 model Customer {
-  id        String   @id @default(cuid())
-  tenantId  String   @map("tenant_id")
-  name      String
-  email     String?
-  phone     String?
-  address   String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(cuid())
+  tenantId      String   @map("tenant_id")
+  name          String
+  email         String?
+  phone         String?
+  address       String?
+  creditLimit   Decimal? @map("credit_limit") @db.Decimal(12, 2) // null = credit sales not allowed
+  creditBalance Decimal  @default(0) @map("credit_balance") @db.Decimal(12, 2) // running balance owed
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   invoices       Invoice[]
   loyaltyAccount LoyaltyAccount?
+  quotations     Quotation[]
+  heldSales      HeldSale[]
 
   @@map("customers")
 }
@@ -338,6 +375,8 @@ model Invoice {
   deviceId   String?       @map("device_id")
   number     String // human-readable: INV-2024-000001
   customerId String?       @map("customer_id")
+  salesmanId String?       @map("salesman_id") // tags which user made the sale; independent of the logged-in cashier
+  notes      String? // "Bill Note" — free text printed/kept with the invoice
   subtotal   Decimal       @db.Decimal(12, 2)
   discount   Decimal       @default(0) @db.Decimal(12, 2)
   tax        Decimal       @default(0) @db.Decimal(12, 2)
@@ -351,6 +390,7 @@ model Invoice {
   outlet         Outlet          @relation(fields: [outletId], references: [id])
   device         Device?         @relation(fields: [deviceId], references: [id])
   customer       Customer?       @relation(fields: [customerId], references: [id])
+  salesman       User?           @relation(fields: [salesmanId], references: [id])
   items          InvoiceItem[]
   payments       Payment[]
   warrantyClaims WarrantyClaim[]
@@ -374,6 +414,7 @@ model InvoiceItem {
   discount     Decimal  @default(0) @db.Decimal(12, 2)
   tax          Decimal  @default(0) @db.Decimal(12, 2)
   lineTotal    Decimal  @map("line_total") @db.Decimal(12, 2)
+  refundedQty  Decimal  @default(0) @map("refunded_qty") @db.Decimal(12, 3) // cumulative qty returned via /refunds
   createdAt    DateTime @default(now()) @map("created_at")
 
   tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -648,7 +689,8 @@ model Shift {
   closingCash Decimal?  @map("closing_cash") @db.Decimal(12, 2)
   notes       String?
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cashMovements CashMovement[]
 
   @@index([tenantId, status])
   @@map("shifts")
@@ -794,13 +836,15 @@ model PurchaseOrderItem {
   tenantId  String  @map("tenant_id")
   poId      String  @map("po_id")
   productId String  @map("product_id")
+  variantId String? @map("variant_id")
   qty       Decimal @db.Decimal(12, 3)
   unitPrice Decimal @map("unit_price") @db.Decimal(12, 2)
   total     Decimal @db.Decimal(12, 2)
 
-  tenant  Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  po      PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  product Product       @relation(fields: [productId], references: [id])
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  po      PurchaseOrder   @relation(fields: [poId], references: [id], onDelete: Cascade)
+  product Product         @relation(fields: [productId], references: [id])
+  variant ProductVariant? @relation(fields: [variantId], references: [id])
 
   @@map("purchase_order_items")
 }
@@ -840,15 +884,117 @@ model GoodsReceivedNoteItem {
   unitCost     Decimal   @map("unit_cost") @db.Decimal(12, 2)
   sellingPrice Decimal?  @map("selling_price") @db.Decimal(12, 2)
   expiryDate   DateTime? @map("expiry_date")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   grn            GoodsReceivedNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
-  product        Product         @relation(fields: [productId], references: [id])
-  variant        ProductVariant? @relation(fields: [variantId], references: [id])
+  product        Product           @relation(fields: [productId], references: [id])
+  variant        ProductVariant?   @relation(fields: [variantId], references: [id])
   stockMovements StockMovement[]
 
   @@index([tenantId, productId, variantId], name: "idx_grn_items_tenant_product_variant")
   @@map("goods_received_note_items")
+}
+
+// ─── Quotations ──────────────────────────────────────────────────────────────
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  CONVERTED
+  EXPIRED
+}
+
+// RLS enabled
+model Quotation {
+  id         String          @id @default(cuid())
+  tenantId   String          @map("tenant_id")
+  outletId   String?         @map("outlet_id")
+  customerId String?         @map("customer_id")
+  number     String // e.g. QUO-2024-001
+  status     QuotationStatus @default(DRAFT)
+  validUntil DateTime?       @map("valid_until")
+  total      Decimal         @default(0) @db.Decimal(12, 2)
+  notes      String?
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer?       @relation(fields: [customerId], references: [id])
+  items    QuotationItem[]
+
+  @@index([tenantId, status])
+  @@map("quotations")
+}
+
+// RLS enabled
+model QuotationItem {
+  id          String  @id @default(cuid())
+  tenantId    String  @map("tenant_id")
+  quotationId String  @map("quotation_id")
+  productId   String  @map("product_id")
+  variantId   String? @map("variant_id")
+  qty         Decimal @db.Decimal(12, 3)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(12, 2)
+  discount    Decimal @default(0) @db.Decimal(12, 2)
+  lineTotal   Decimal @map("line_total") @db.Decimal(12, 2)
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  quotation Quotation       @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("quotation_items")
+}
+
+// ─── Held sales ("Hold Trans" / "Load Trans") ─────────────────────────────────
+
+// RLS enabled
+model HeldSale {
+  id           String   @id @default(cuid())
+  tenantId     String   @map("tenant_id")
+  outletId     String?  @map("outlet_id")
+  customerId   String?  @map("customer_id")
+  note         String?
+  // Full in-progress cart: lines (incl. per-item discount/price overrides),
+  // bill discount, draft payments, rate type — whatever the POS needs to
+  // reconstruct the exact cart it was holding.
+  cartSnapshot Json     @map("cart_snapshot")
+  createdBy    String?  @map("created_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@map("held_sales")
+}
+
+// ─── Cash drawer / expense / paid-out ledger ──────────────────────────────────
+
+enum CashMovementType {
+  DRAWER_OPEN
+  PAID_IN
+  PAID_OUT
+}
+
+// RLS enabled
+model CashMovement {
+  id        String           @id @default(cuid())
+  tenantId  String           @map("tenant_id")
+  outletId  String?          @map("outlet_id")
+  shiftId   String           @map("shift_id")
+  type      CashMovementType
+  amount    Decimal          @default(0) @db.Decimal(12, 2)
+  reason    String?
+  createdBy String?          @map("created_by")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shift  Shift  @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, shiftId])
+  @@map("cash_movements")
 }
 
 // ─── Warranty ────────────────────────────────────────────────────────────────
@@ -902,19 +1048,19 @@ enum MessageStatus {
 // service layer masks them on read.
 // RLS enabled
 model NotificationSettings {
-  id                     String   @id @default(cuid())
-  tenantId               String   @unique @map("tenant_id")
-  whatsappEnabled        Boolean  @default(false) @map("whatsapp_enabled")
-  whatsappPhoneNumberId  String?  @map("whatsapp_phone_number_id")
-  whatsappBusinessAcctId String?  @map("whatsapp_business_account_id")
-  whatsappAccessToken    String?  @map("whatsapp_access_token") // encrypted
-  smsEnabled             Boolean  @default(false) @map("sms_enabled")
-  smsApiToken            String?  @map("sms_api_token") // encrypted
-  smsSenderName          String?  @map("sms_sender_name")
-  autoSendReceiptWhatsapp Boolean @default(false) @map("auto_send_receipt_whatsapp")
-  autoSendReceiptSms     Boolean  @default(false) @map("auto_send_receipt_sms")
-  createdAt              DateTime @default(now()) @map("created_at")
-  updatedAt              DateTime @updatedAt @map("updated_at")
+  id                      String   @id @default(cuid())
+  tenantId                String   @unique @map("tenant_id")
+  whatsappEnabled         Boolean  @default(false) @map("whatsapp_enabled")
+  whatsappPhoneNumberId   String?  @map("whatsapp_phone_number_id")
+  whatsappBusinessAcctId  String?  @map("whatsapp_business_account_id")
+  whatsappAccessToken     String?  @map("whatsapp_access_token") // encrypted
+  smsEnabled              Boolean  @default(false) @map("sms_enabled")
+  smsApiToken             String?  @map("sms_api_token") // encrypted
+  smsSenderName           String?  @map("sms_sender_name")
+  autoSendReceiptWhatsapp Boolean  @default(false) @map("auto_send_receipt_whatsapp")
+  autoSendReceiptSms      Boolean  @default(false) @map("auto_send_receipt_sms")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -924,16 +1070,16 @@ model NotificationSettings {
 // Append-only send log for both channels.
 // RLS enabled
 model MessageLog {
-  id                 String        @id @default(cuid())
-  tenantId           String        @map("tenant_id")
-  channel            MessageChannel
-  recipientPhone     String        @map("recipient_phone")
-  body               String
-  status             MessageStatus @default(PENDING)
-  providerMessageId  String?       @map("provider_message_id")
-  errorMessage       String?       @map("error_message")
-  relatedInvoiceId   String?       @map("related_invoice_id") @db.Uuid
-  createdAt          DateTime      @default(now()) @map("created_at")
+  id                String         @id @default(cuid())
+  tenantId          String         @map("tenant_id")
+  channel           MessageChannel
+  recipientPhone    String         @map("recipient_phone")
+  body              String
+  status            MessageStatus  @default(PENDING)
+  providerMessageId String?        @map("provider_message_id")
+  errorMessage      String?        @map("error_message")
+  relatedInvoiceId  String?        @map("related_invoice_id") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at")
 
   tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   invoice Invoice? @relation(fields: [relatedInvoiceId], references: [id])

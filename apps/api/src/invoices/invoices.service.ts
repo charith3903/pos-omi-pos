@@ -1,7 +1,8 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { StockService } from '../stock/stock.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 
 const INVOICE_INCLUDE = {
@@ -9,6 +10,7 @@ const INVOICE_INCLUDE = {
   payments: true,
   customer: { select: { id: true, name: true, phone: true } },
   outlet: { select: { id: true, name: true } },
+  salesman: { select: { id: true, name: true } },
 } as const;
 
 @Injectable()
@@ -19,6 +21,7 @@ export class InvoicesService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly notifications: NotificationsService,
+    private readonly stock: StockService,
   ) {}
 
   // ─── Create (idempotent) ────────────────────────────────────────────────
@@ -59,6 +62,32 @@ export class InvoicesService {
       });
       const productMap = new Map(products.map((p) => [p.id, p]));
 
+      // ── Credit-sale check (payment method CREDIT charges the customer's
+      //    running balance instead of collecting cash/card now) ──────────
+      const creditAmount = dto.payments
+        .filter((p) => p.method === 'CREDIT')
+        .reduce((s, p) => s + p.amount, 0);
+      if (creditAmount > 0) {
+        if (!dto.customerId) {
+          throw new BadRequestException('A customer must be selected for a credit sale');
+        }
+        const customer = await tx.customer.findFirst({ where: { id: dto.customerId, tenantId } });
+        if (!customer) throw new NotFoundException('Customer not found');
+        if (customer.creditLimit == null) {
+          throw new BadRequestException('This customer is not approved for credit sales');
+        }
+        const nextBalance = Number(customer.creditBalance) + creditAmount;
+        if (nextBalance > Number(customer.creditLimit)) {
+          throw new BadRequestException(
+            `Credit limit exceeded: balance would be ${nextBalance.toFixed(2)}, limit is ${Number(customer.creditLimit).toFixed(2)}`,
+          );
+        }
+        await tx.customer.update({
+          where: { id: customer.id },
+          data: { creditBalance: nextBalance },
+        });
+      }
+
       // ── Write invoice ─────────────────────────────────────────────────
       const invoice = await tx.invoice.create({
         data: {
@@ -68,6 +97,8 @@ export class InvoicesService {
           deviceId: dto.deviceId,
           number,
           customerId: dto.customerId,
+          salesmanId: dto.salesmanId ?? null,
+          notes: dto.notes ?? null,
           subtotal: dto.subtotal,
           discount: dto.discount ?? 0,
           tax: dto.tax ?? 0,
@@ -105,71 +136,21 @@ export class InvoicesService {
       });
 
       // ── Write stock movements (append-only ledger) ────────────────────
-      // Negative delta = stock out (sale). Depletes the oldest remaining
-      // batch(es) first (FIFO) so batch stock levels and per-batch cost stay
-      // accurate — a sale can span more than one batch if it outlasts the
-      // oldest one's remaining qty. Items with no batch history (manual
-      // stock, or GRN predates batch tracking) fall back to an unbatched
-      // movement, same as before.
-      const movementData: {
-        tenantId: string;
-        productId: string;
-        variantId: string | null;
-        batchId?: string;
-        unitCost?: any;
-        qtyDelta: number;
-        reason: 'SALE';
-        refId: string;
-        deviceId: string | null;
-      }[] = [];
-
-      for (const item of dto.items) {
-        if (!productMap.get(item.productId)?.trackStock) continue;
-        let remaining = Number(item.qty);
-
-        const batches = await tx.goodsReceivedNoteItem.findMany({
-          where: {
-            tenantId,
-            productId: item.productId,
-            variantId: item.variantId ?? null,
-            qtyRemaining: { gt: 0 },
-          },
-          orderBy: { grn: { createdAt: 'asc' } },
-        });
-
-        for (const batch of batches) {
-          if (remaining <= 0) break;
-          const deduct = Math.min(remaining, Number(batch.qtyRemaining));
-          await tx.goodsReceivedNoteItem.update({
-            where: { id: batch.id },
-            data: { qtyRemaining: { decrement: deduct } },
-          });
-          movementData.push({
-            tenantId,
-            productId: item.productId,
-            variantId: item.variantId ?? null,
-            batchId: batch.id,
-            unitCost: batch.unitCost,
-            qtyDelta: -deduct,
-            reason: 'SALE',
-            refId: invoice.id,
-            deviceId: dto.deviceId ?? null,
-          });
-          remaining -= deduct;
-        }
-
-        if (remaining > 0) {
-          movementData.push({
-            tenantId,
-            productId: item.productId,
-            variantId: item.variantId ?? null,
-            qtyDelta: -remaining,
-            reason: 'SALE',
-            refId: invoice.id,
-            deviceId: dto.deviceId ?? null,
-          });
-        }
-      }
+      // Negative delta = stock out (sale). Depletes the cashier-picked batch
+      // first if one was chosen in the POS batch picker, then FIFO (oldest
+      // remaining batch first) for the rest — see StockService.consumeStockForSale.
+      const movementData = await this.stock.consumeStockForSale(
+        tx,
+        tenantId,
+        dto.items.map((item) => ({
+          productId: item.productId,
+          variantId: item.variantId ?? null,
+          qty: item.qty,
+          batchId: item.batchId,
+          trackStock: productMap.get(item.productId)?.trackStock ?? false,
+        })),
+        { refId: invoice.id, deviceId: dto.deviceId ?? null },
+      );
 
       if (movementData.length) {
         await tx.stockMovement.createMany({ data: movementData });

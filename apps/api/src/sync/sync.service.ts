@@ -93,32 +93,49 @@ export class SyncService {
             },
           });
 
-          // Stock movements — flag negative stock but never reject
-          for (const line of data.items ?? []) {
-            const [stockRow] = await tx.$queryRaw<[{ stock: string }]>`
-              SELECT COALESCE(SUM(qty_delta), 0)::text AS stock
-              FROM stock_movements
-              WHERE tenant_id = current_setting('app.current_tenant', true)
-                AND product_id = ${line.productId}
-            `;
-            const currentStock = parseFloat(stockRow.stock);
-            if (currentStock < line.qty) {
-              this.log.warn(
-                `Negative stock after sync: product ${line.productId} ` +
-                  `current=${currentStock} deducting=${line.qty}`,
-              );
+          // Stock movements — batch-aware (cashier-picked batch first, then
+          // FIFO), same logic and same ledger shape as the online invoice
+          // path. Never rejects the sale over stock levels, only logs.
+          const lines = data.items ?? [];
+          if (lines.length) {
+            const products = await tx.product.findMany({
+              where: { id: { in: [...new Set(lines.map((l) => l.productId))] } },
+              select: { id: true, trackStock: true },
+            });
+            const trackStockMap = new Map(products.map((p) => [p.id, p.trackStock]));
+
+            for (const line of lines) {
+              const [stockRow] = await tx.$queryRaw<[{ stock: string }]>`
+                SELECT COALESCE(SUM(qty_delta), 0)::text AS stock
+                FROM stock_movements
+                WHERE tenant_id = current_setting('app.current_tenant', true)
+                  AND product_id = ${line.productId}
+              `;
+              const currentStock = parseFloat(stockRow.stock);
+              if (currentStock < line.qty) {
+                this.log.warn(
+                  `Negative stock after sync: product ${line.productId} ` +
+                    `current=${currentStock} deducting=${line.qty}`,
+                );
+              }
             }
 
-            await tx.stockMovement.create({
-              data: {
-                tenantId,
+            const movementData = await this.stock.consumeStockForSale(
+              tx,
+              tenantId,
+              lines.map((line) => ({
                 productId: line.productId,
                 variantId: line.variantId ?? null,
-                qtyDelta: -line.qty,
-                reason: 'SALE',
-                refId: item.id,
-              },
-            });
+                qty: line.qty,
+                batchId: line.batchId,
+                trackStock: trackStockMap.get(line.productId) ?? false,
+              })),
+              { refId: item.id, deviceId },
+            );
+
+            if (movementData.length) {
+              await tx.stockMovement.createMany({ data: movementData });
+            }
           }
 
           // Bust Redis stock cache
@@ -237,9 +254,10 @@ export class SyncService {
     variants: any[];
     categories: any[];
     customers: any[];
+    batches: any[];
     cursor: string;
   }> {
-    const [products, variants, categories, customers, stockByProduct, stockByVariant] = await Promise.all([
+    const [products, variants, categories, customers, batches, stockByProduct, stockByVariant] = await Promise.all([
       this.prisma.withTenant(tenantId, (tx) =>
         tx.product.findMany({
           where: { updatedAt: { gt: since } },
@@ -291,6 +309,29 @@ export class SyncService {
           take: 500,
         }),
       ),
+      // Batches — a batch is "available" while it still has qtyRemaining.
+      // updatedAt fires on every FIFO/manual-pick decrement, so a batch that
+      // gets fully depleted between syncs shows up here at qtyRemaining = 0
+      // and the client deletes its local copy (see database.dart).
+      this.prisma.withTenant(tenantId, (tx) =>
+        tx.goodsReceivedNoteItem.findMany({
+          where: { updatedAt: { gt: since } },
+          select: {
+            id: true,
+            productId: true,
+            variantId: true,
+            batchNo: true,
+            qtyRemaining: true,
+            unitCost: true,
+            sellingPrice: true,
+            expiryDate: true,
+            updatedAt: true,
+            grn: { select: { createdAt: true } },
+          },
+          orderBy: { updatedAt: 'asc' },
+          take: 1000,
+        }),
+      ),
       this.stock.getAllStock(tenantId),
       this.stock.getAllStockByVariant(tenantId),
     ]);
@@ -325,6 +366,18 @@ export class SyncService {
       customers: customers.map((c) => ({
         ...c,
         updatedAt: c.updatedAt.toISOString(),
+      })),
+      batches: batches.map((b) => ({
+        id: b.id,
+        productId: b.productId,
+        variantId: b.variantId,
+        batchNo: b.batchNo,
+        qtyRemaining: Number(b.qtyRemaining),
+        unitCost: Number(b.unitCost),
+        sellingPrice: b.sellingPrice != null ? Number(b.sellingPrice) : null,
+        expiryDate: b.expiryDate ? b.expiryDate.toISOString() : null,
+        receivedAt: b.grn.createdAt.toISOString(),
+        updatedAt: b.updatedAt.toISOString(),
       })),
       cursor,
     };

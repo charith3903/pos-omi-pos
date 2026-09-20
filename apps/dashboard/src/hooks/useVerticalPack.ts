@@ -18,13 +18,26 @@ export function useVerticalPack() {
   return { pack, loading };
 }
 
-/** Quick helper — reads businessType from session (no API call). */
+/**
+ * Quick helper — reads businessType from session (no API call).
+ *
+ * Returns '' on the very first render on both server and client (matching,
+ * so nothing hydration-mismatches), then fills in the real value from
+ * localStorage after mount. Callers that branch to entirely different
+ * component trees per business type (e.g. BillingPage picking RestaurantPOS
+ * vs GenericBilling) will render their '' branch for one frame before
+ * swapping — expected and harmless, unlike reading localStorage directly
+ * during render, which desyncs the server and client trees outright and
+ * forces React to discard and rebuild the whole subtree.
+ */
 export function useBusinessType(): string {
-  if (typeof window === 'undefined') return '';
-  return getSession()?.tenant?.businessType ?? '';
+  const [businessType, setBusinessType] = useState('');
+  useEffect(() => {
+    setBusinessType(getSession()?.tenant?.businessType ?? '');
+  }, []);
+  return businessType;
 }
 
-export function isSparePartsStore(): boolean {
-  if (typeof window === 'undefined') return false;
-  return getSession()?.tenant?.businessType === 'SPARE_PARTS';
+export function useIsSparePartsStore(): boolean {
+  return useBusinessType() === 'SPARE_PARTS';
 }

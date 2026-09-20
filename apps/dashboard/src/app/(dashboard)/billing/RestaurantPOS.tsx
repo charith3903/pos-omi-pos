@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import {
   Search, Plus, Minus, X, FileText, Star, Printer,
   Loader2, AlertCircle, CheckCircle, Gift,
-  SplitSquareHorizontal, Clock
+  SplitSquareHorizontal, Clock, Home
 } from 'lucide-react';
 
 interface CartItem { productId: string; name: string; portion: string; portionPrice: number; qty: number; notes: string; isComplementary: boolean; modifiers: string[]; stations: string[] }
@@ -317,11 +317,23 @@ export default function RestaurantPOS() {
                 {order && ` · ${order.guestCount} guests · ${kotCount} KOT${kotCount !== 1 ? 's' : ''}`}
               </div>
             </div>
-            {kotCount > 0 && (
-              <div className="flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-semibold">
-                <Clock className="w-3 h-3" /> {kotCount} KOT
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {kotCount > 0 && (
+                <div className="flex items-center gap-1 text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-semibold">
+                  <Clock className="w-3 h-3" /> {kotCount} KOT
+                </div>
+              )}
+              {/* /billing renders full-screen with no dashboard sidebar
+                  (see apps/dashboard/src/app/(dashboard)/layout.tsx), so
+                  this is the only way back to the dashboard from the POS. */}
+              <button
+                onClick={() => router.push('/dashboard')}
+                title="Back Office"
+                className="flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded-full font-semibold transition-colors"
+              >
+                <Home className="w-3 h-3" /> Back Office
+              </button>
+            </div>
           </div>
 
           {/* Customer / loyalty */}
