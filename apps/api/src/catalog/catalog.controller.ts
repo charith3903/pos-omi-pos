@@ -21,6 +21,7 @@ import { CatalogService } from './catalog.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { redactProductCost, redactProductsCost } from '../common/utils/redact-cost.util';
 
 @Controller()
 @UseGuards(JwtAuthGuard, SubscriptionGuard, RolesGuard)
@@ -44,7 +45,7 @@ export class CatalogController {
   // ─── Products ──────────────────────────────────────────────────────────
 
   @Get('products')
-  listProducts(
+  async listProducts(
     @CurrentUser() u: RequestUser,
     @Query('search') search?: string,
     @Query('categoryId') categoryId?: string,
@@ -52,23 +53,26 @@ export class CatalogController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.catalog.listProducts(u.tenantId, {
+    const result = await this.catalog.listProducts(u.tenantId, {
       search,
       categoryId,
       season,
       page: page ? parseInt(page) : undefined,
       limit: limit ? parseInt(limit) : undefined,
     });
+    return { ...result, items: redactProductsCost(result.items, u.role) };
   }
 
   @Get('products/barcode/:barcode')
-  getByBarcode(@CurrentUser() u: RequestUser, @Param('barcode') barcode: string) {
-    return this.catalog.getProductByBarcode(u.tenantId, barcode);
+  async getByBarcode(@CurrentUser() u: RequestUser, @Param('barcode') barcode: string) {
+    const product = await this.catalog.getProductByBarcode(u.tenantId, barcode);
+    return redactProductCost(product, u.role);
   }
 
   @Get('products/:id')
-  getProduct(@CurrentUser() u: RequestUser, @Param('id') id: string) {
-    return this.catalog.getProductById(u.tenantId, id);
+  async getProduct(@CurrentUser() u: RequestUser, @Param('id') id: string) {
+    const product = await this.catalog.getProductById(u.tenantId, id);
+    return redactProductCost(product, u.role);
   }
 
   @Post('products')

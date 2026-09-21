@@ -103,6 +103,8 @@ function Sidebar() {
 
   const isSpareParts = businessType === 'SPARE_PARTS';
   const isRestaurant = businessType === 'RESTAURANT';
+  const isMobileShop = businessType === 'MOBILE';
+  const hasRepairs = pack.enabledModules.includes('repairs');
   // Spare parts already has its own Procurement section (below) pointing at
   // /spare-parts/*; this generic one covers any other vertical pack that
   // lists 'purchasing' (currently just TEXTILE) without duplicating nav for
@@ -164,7 +166,7 @@ function Sidebar() {
             <p className="px-6 pt-5 pb-2 text-xs font-semibold text-blue-400 uppercase tracking-wider">
               Service &amp; Garage
             </p>
-            {navItem('/spare-parts/job-cards', 'Job Cards', <Wrench className="w-4 h-4" />)}
+            {hasRepairs && navItem('/repairs', 'Job Cards', <Wrench className="w-4 h-4" />)}
             {navItem('/spare-parts/vehicles', 'Vehicle Lookup', <Car className="w-4 h-4" />)}
             {navItem('/spare-parts/warranty', 'Warranty Claims', <ShieldCheck className="w-4 h-4" />)}
             {navItem('/spare-parts/refunds', 'Returns & Refunds', <Undo2 className="w-4 h-4" />)}
@@ -175,6 +177,15 @@ function Sidebar() {
             {navItem('/spare-parts/suppliers', 'Suppliers', <Factory className="w-4 h-4" />)}
             {navItem('/spare-parts/purchase-orders', 'Purchase Orders', <FileSpreadsheet className="w-4 h-4" />)}
             {navItem('/spare-parts/grn', 'Goods Received (GRN)', <Truck className="w-4 h-4" />)}
+          </>
+        )}
+
+        {isMobileShop && (
+          <>
+            <p className="px-6 pt-5 pb-2 text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+              Repair Workshop
+            </p>
+            {navItem('/repairs', hasRepairs ? 'Repair Jobs' : 'Repair Jobs 🔒', <Wrench className="w-4 h-4" />)}
           </>
         )}
 

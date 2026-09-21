@@ -21,6 +21,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
 import { ExchangeVariantDto, GenerateVariantsDto } from './dto/textile.dto';
 import { TextileService } from './textile.service';
+import { canViewCost } from '../common/utils/redact-cost.util';
 
 @Controller('textile')
 @UseGuards(JwtAuthGuard, SubscriptionGuard, RolesGuard)
@@ -44,8 +45,13 @@ export class TextileController {
    * Returns all variants with a matrix summary { sizes, colors }.
    */
   @Get('variants/:productId')
-  listVariants(@CurrentUser() u: RequestUser, @Param('productId') productId: string) {
-    return this.svc.listVariants(u.tenantId, productId);
+  async listVariants(@CurrentUser() u: RequestUser, @Param('productId') productId: string) {
+    const result = await this.svc.listVariants(u.tenantId, productId);
+    if (canViewCost(u.role)) return result;
+    return {
+      ...result,
+      variants: result.variants.map(({ cost: _cost, ...rest }: any) => rest),
+    };
   }
 
   /**

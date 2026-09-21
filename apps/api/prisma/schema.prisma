@@ -118,6 +118,7 @@ model Tenant {
   shifts                 Shift[]
   imeiRecords            ImeiRecord[]
   repairJobs             RepairJob[]
+  repairJobParts         RepairJobPart[]
   rentalAgreements       RentalAgreement[]
   promotions             Promotion[]
   dailySalesSummaries    DailySalesSummary[]
@@ -154,8 +155,9 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  salesInvoices Invoice[]
+  tenant           Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salesInvoices    Invoice[]
+  repairJobsAsTech RepairJob[]
 
   @@unique([tenantId, email])
   @@map("users")
@@ -171,10 +173,11 @@ model Outlet {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  devices  Device[]
-  invoices Invoice[]
-  settings OutletSettings?
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  devices    Device[]
+  invoices   Invoice[]
+  settings   OutletSettings?
+  repairJobs RepairJob[]
 
   @@map("outlets")
 }
@@ -263,6 +266,7 @@ model Product {
   goodsReceivedNoteItems GoodsReceivedNoteItem[]
   quotationItems         QuotationItem[]
   warrantyClaims         WarrantyClaim[]
+  repairJobParts         RepairJobPart[]
 
   @@unique([tenantId, sku])
   @@index([tenantId, barcode], name: "idx_products_tenant_barcode")
@@ -292,6 +296,7 @@ model ProductVariant {
   purchaseOrderItems     PurchaseOrderItem[]
   quotationItems         QuotationItem[]
   variantSalesSummaries  VariantSalesSummary[]
+  repairJobParts         RepairJobPart[]
 
   @@index([tenantId, barcode], name: "idx_variants_tenant_barcode")
   @@index([tenantId, productId])
@@ -343,6 +348,7 @@ model Customer {
   loyaltyAccount LoyaltyAccount?
   quotations     Quotation[]
   heldSales      HeldSale[]
+  repairJobs     RepairJob[]
 
   @@map("customers")
 }
@@ -395,6 +401,7 @@ model Invoice {
   payments       Payment[]
   warrantyClaims WarrantyClaim[]
   messageLogs    MessageLog[]
+  repairJob      RepairJob?
 
   @@index([tenantId, createdAt], name: "idx_invoices_tenant_created")
   @@map("invoices")
@@ -717,29 +724,70 @@ model ImeiRecord {
   @@map("imei_records")
 }
 
-// Repair job sheet
+// Repair job sheet — a phone/device repair ticket. Billing (parts + labor)
+// happens by generating a real Invoice once the job is checked out
+// (RepairsService.checkout), so a repair's revenue/COGS flow through the
+// normal invoice/stock-movement pipeline and show up in existing sales and
+// profit reports without any separate reporting path.
 // RLS enabled
 model RepairJob {
   id              String    @id @default(cuid())
   tenantId        String    @map("tenant_id")
+  outletId        String?   @map("outlet_id")
   customerId      String?   @map("customer_id")
+  technicianId    String?   @map("technician_id")
+  invoiceId       String?   @unique @map("invoice_id") @db.Uuid // set once checked out — job becomes read-only for parts/cost after this
   deviceMake      String    @map("device_make")
   deviceModel     String    @map("device_model")
   imei            String?
   issue           String
-  status          String    @default("RECEIVED") // RECEIVED | DIAGNOSING | REPAIRING | READY | DELIVERED
+  diagnosis       String?
+  status          String    @default("RECEIVED") // RECEIVED | DIAGNOSING | REPAIRING | READY | DELIVERED | CANCELLED
   technicianNotes String?   @map("technician_notes")
+  laborCharge     Decimal   @default(0) @map("labor_charge") @db.Decimal(12, 2)
   estimatedCost   Decimal?  @map("estimated_cost") @db.Decimal(12, 2)
-  actualCost      Decimal?  @map("actual_cost") @db.Decimal(12, 2)
+  actualCost      Decimal?  @map("actual_cost") @db.Decimal(12, 2) // set from the generated invoice's total at checkout
   receivedAt      DateTime  @default(now()) @map("received_at")
   completedAt     DateTime? @map("completed_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  outlet     Outlet?         @relation(fields: [outletId], references: [id])
+  customer   Customer?       @relation(fields: [customerId], references: [id])
+  technician User?           @relation(fields: [technicianId], references: [id])
+  invoice    Invoice?        @relation(fields: [invoiceId], references: [id])
+  parts      RepairJobPart[]
 
   @@index([tenantId, status])
+  @@index([tenantId, technicianId])
   @@map("repair_jobs")
+}
+
+// One part consumed by a repair job. Stock is NOT deducted when a part is
+// added here — only at checkout, when RepairsService builds an invoice from
+// these rows and InvoicesService.create() consumes stock through the same
+// path as any other sale (batch/FIFO costing included). Rows become
+// immutable once the parent job's invoiceId is set.
+// RLS enabled
+model RepairJobPart {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  repairJobId String   @map("repair_job_id")
+  productId   String   @map("product_id")
+  variantId   String?  @map("variant_id")
+  qty         Decimal  @db.Decimal(12, 3)
+  unitCost    Decimal? @map("unit_cost") @db.Decimal(12, 2) // snapshot for margin display before billing
+  unitPrice   Decimal  @map("unit_price") @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  repairJob RepairJob       @relation(fields: [repairJobId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([tenantId, repairJobId])
+  @@map("repair_job_parts")
 }
 
 // ─── Rental ──────────────────────────────────────────────────────────────────

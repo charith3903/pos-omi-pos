@@ -40,6 +40,7 @@ const DEMO_PASSWORD = 'admin123';
 // end-to-end. Every other pack module stays free, as before.
 const ADDON_ONLY_MODULES: Partial<Record<BusinessType, string[]>> = {
   RESTAURANT: ['purchasing'],
+  MOBILE: ['repairs'],
 };
 
 const ADDON_CATALOG: {
@@ -57,6 +58,14 @@ const ADDON_CATALOG: {
     priceUsdMonthly: 9.99,
     priceLkrMonthly: 3000,
     applicableBusinessTypes: ['RESTAURANT'],
+  },
+  {
+    moduleKey: 'repairs',
+    name: 'Phone Repair & Service Jobs',
+    description: 'Run a repair workshop alongside your shop: intake devices, assign technicians, track parts used, and bill parts + labor straight to an invoice.',
+    priceUsdMonthly: 12.99,
+    priceLkrMonthly: 3900,
+    applicableBusinessTypes: ['MOBILE'],
   },
 ];
 

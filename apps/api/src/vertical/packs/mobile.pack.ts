@@ -86,7 +86,10 @@ export const MOBILE_PACK: VerticalPack = {
     },
   ],
 
-  enabledModules: ['catalog', 'invoices', 'stock', 'imei', 'repairs'],
+  // 'mobile' covers IMEI record/lookup (MobileController); 'repairs' covers
+  // the repair-job workshop (RepairsController) — sold separately as a paid
+  // add-on for this vertical (see seed.ts's ADDON_ONLY_MODULES).
+  enabledModules: ['catalog', 'invoices', 'stock', 'mobile', 'imei', 'repairs'],
   defaultTaxRate: 0,
   receiptTemplate: 'mobile',
   searchFilterKeys: ['brand', 'model'],

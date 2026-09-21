@@ -22,11 +22,15 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await res.json().catch(() => ({}));
 
   if (res.status === 402) {
-    // Subscription suspended / trial expired — SubscriptionGuard's response.
-    // Redirect to the reactivation page instead of surfacing a raw error,
-    // unless we're already there (avoid a redirect loop).
-    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/account/subscription')) {
-      window.location.href = '/account/subscription?reason=expired';
+    // SubscriptionGuard's response — either the tenant's subscription itself
+    // is suspended/trial-expired, or (a distinct case, same status code) a
+    // specific route requires a paid add-on the tenant hasn't purchased.
+    // Send each case to the page that can actually fix it, unless we're
+    // already there (avoid a redirect loop).
+    const requiresAddOn = typeof body?.message === 'string' && body.message.includes('requires a paid add-on');
+    const target = requiresAddOn ? '/settings/addons' : '/account/subscription?reason=expired';
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith(target.split('?')[0])) {
+      window.location.href = target;
     }
     throw new Error(body?.message ?? 'Subscription required');
   }
@@ -231,15 +235,35 @@ export const api = {
     request<any>(`/invoices/by-number/${encodeURIComponent(number)}`),
   getInvoiceById: (id: string) => request<any>(`/invoices/${encodeURIComponent(id)}`),
 
-  // ─── Repair Jobs (job cards) ─────────────────────────────────────────────
-  getRepairJobs: (status?: string) => {
-    const q = status ? `?status=${encodeURIComponent(status)}` : '';
-    return request<any[]>(`/mobile/repair-jobs${q}`);
+  // ─── Repair Jobs (phone/device repair workshop — paid add-on for Mobile
+  //     Shop tenants, free/included for Spare Parts; see @RequiresModule
+  //     ('repairs') on RepairsController) ──────────────────────────────────
+  getRepairJobs: (status?: string, technicianId?: string) => {
+    const q = new URLSearchParams();
+    if (status) q.set('status', status);
+    if (technicianId) q.set('technicianId', technicianId);
+    const qs = q.toString();
+    return request<any[]>(`/repairs${qs ? `?${qs}` : ''}`);
   },
+  getRepairJob: (id: string) => request<any>(`/repairs/${encodeURIComponent(id)}`),
   createRepairJob: (data: any) =>
-    request<any>('/mobile/repair-jobs', { method: 'POST', body: JSON.stringify(data) }),
+    request<any>('/repairs', { method: 'POST', body: JSON.stringify(data) }),
   updateRepairJob: (id: string, data: any) =>
-    request<any>(`/mobile/repair-jobs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    request<any>(`/repairs/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  addRepairPart: (id: string, data: { productId: string; variantId?: string; qty: number; unitPrice?: number }) =>
+    request<any>(`/repairs/${id}/parts`, { method: 'POST', body: JSON.stringify(data) }),
+  removeRepairPart: (id: string, partId: string) =>
+    request<any>(`/repairs/${id}/parts/${encodeURIComponent(partId)}`, { method: 'DELETE' }),
+  checkoutRepairJob: (
+    id: string,
+    data: {
+      outletId: string;
+      customerId?: string;
+      discount?: number;
+      laborCharge?: number;
+      payments: { method: string; amount: number }[];
+    },
+  ) => request<any>(`/repairs/${id}/checkout`, { method: 'POST', body: JSON.stringify(data) }),
 
   // ─── Customers (extended) ────────────────────────────────────────────────
   updateCustomer: (id: string, data: any) =>
@@ -318,6 +342,13 @@ export const api = {
 
   // ─── Users (staff — e.g. Salesman picker) ───────────────────────────────
   getUsers: () => request<{ id: string; name: string; role: string }[]>('/users'),
+
+  // ─── Devices (till registry for the web POS) ────────────────────────────
+  registerDevice: (data: { name?: string; outletId?: string }) =>
+    request<{ id: string; name: string; outletId: string }>('/devices', { method: 'POST', body: JSON.stringify(data) }),
+  getDevice: (id: string) => request<{ id: string; name: string; outletId: string }>(`/devices/${id}`),
+  renameDevice: (id: string, name: string) =>
+    request<{ id: string; name: string; outletId: string }>(`/devices/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
 
   // ─── Quotations ──────────────────────────────────────────────────────────
   getQuotations: () => request<any[]>('/quotations'),

@@ -34,6 +34,8 @@ import { PosSettingsModule } from './pos-settings/pos-settings.module';
 import { QuotationsModule } from './quotations/quotations.module';
 import { HeldSalesModule } from './held-sales/held-sales.module';
 import { UsersModule } from './users/users.module';
+import { DevicesModule } from './devices/devices.module';
+import { RepairsModule } from './repairs/repairs.module';
 
 @Module({
   imports: [
@@ -75,6 +77,8 @@ import { UsersModule } from './users/users.module';
     QuotationsModule,
     HeldSalesModule,
     UsersModule,
+    DevicesModule,
+    RepairsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

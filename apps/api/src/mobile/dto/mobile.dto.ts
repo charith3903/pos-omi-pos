@@ -1,10 +1,4 @@
-import {
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsString,
-  Min,
-} from 'class-validator';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class RecordImeiDto {
   @IsString()
@@ -25,39 +19,4 @@ export class RecordImeiDto {
   @IsInt()
   @Min(0)
   warrantyMonths?: number;
-}
-
-export class CreateRepairJobDto {
-  @IsOptional()
-  @IsString()
-  customerId?: string;
-
-  @IsString()
-  deviceMake: string;
-
-  @IsString()
-  deviceModel: string;
-
-  @IsOptional()
-  @IsString()
-  imei?: string;
-
-  @IsString()
-  issue: string;
-
-  @IsOptional()
-  estimatedCost?: number;
-}
-
-export class UpdateRepairJobDto {
-  @IsOptional()
-  @IsEnum(['RECEIVED', 'DIAGNOSING', 'REPAIRING', 'READY', 'DELIVERED'])
-  status?: string;
-
-  @IsOptional()
-  @IsString()
-  technicianNotes?: string;
-
-  @IsOptional()
-  actualCost?: number;
 }

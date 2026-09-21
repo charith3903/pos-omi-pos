@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+
+const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 // ─── Shared modal shell ────────────────────────────────────────────────────
 
@@ -16,14 +18,62 @@ export function Modal({
   children: React.ReactNode;
   width?: string;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  // A cashier operating the till has no mouse, so a modal must be fully
+  // self-contained from the keyboard: Escape to leave, and Tab must stay
+  // inside the dialog instead of wandering back into the till underneath it
+  // (with no trap, Tab from a freshly-opened dialog resumes wherever page
+  // focus last was, which could be dozens of elements away from anything in
+  // the dialog at all).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const focusables = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  // Move focus into the dialog the moment it opens — otherwise focus is
+  // still wherever it was on the till underneath, and the trap above has
+  // nothing to cycle from. Whatever opened this modal (e.g. Enter on a
+  // search result) still has a native keyup in flight, and if that keyup
+  // lands on a newly-focused <button>, the browser synthesizes a click on
+  // it and the modal closes/acts on itself instantly. Text fields don't
+  // have that problem (a stray Enter keyup on an <input> does nothing), so
+  // only those get focused directly — a content area that opens on a list
+  // of buttons (e.g. the variant picker) instead parks focus on the inert
+  // dialog container, leaving Tab to reach the first real button on purpose.
+  useEffect(() => {
+    const first = contentRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    if (first && ['INPUT', 'TEXTAREA', 'SELECT'].includes(first.tagName)) {
+      first.focus();
+    } else {
+      dialogRef.current?.focus();
+    }
+  }, []);
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className={`bg-white rounded-2xl shadow-2xl w-full ${width} max-h-[85vh] overflow-auto`}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} className={`bg-white rounded-2xl shadow-2xl w-full ${width} max-h-[85vh] overflow-auto outline-none`}>
         <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white">
           <span className="font-semibold text-gray-900">{title}</span>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
-        <div className="p-6">{children}</div>
+        <div ref={contentRef} className="p-6">{children}</div>
       </div>
     </div>
   );

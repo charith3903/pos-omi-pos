@@ -3,6 +3,7 @@ import { PurchasingService } from './purchasing.service';
 import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SubscriptionGuard } from '../common/guards/subscription.guard';
+import { redactBatchCost } from '../common/utils/redact-cost.util';
 
 @Controller('purchasing')
 @UseGuards(JwtAuthGuard, SubscriptionGuard)
@@ -34,7 +35,8 @@ export class PurchasingController {
 
   // ── Batches (batch-wise stock/pricing) ──
   @Get('batches')
-  getBatches(@Req() req, @Query('productId') productId?: string, @Query('variantId') variantId?: string) {
-    return this.purchasingService.getBatches(req.user.tenantId, productId, variantId);
+  async getBatches(@Req() req, @Query('productId') productId?: string, @Query('variantId') variantId?: string) {
+    const batches = await this.purchasingService.getBatches(req.user.tenantId, productId, variantId);
+    return redactBatchCost(batches, req.user.role);
   }
 }

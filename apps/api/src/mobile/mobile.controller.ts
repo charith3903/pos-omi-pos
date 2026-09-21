@@ -1,23 +1,15 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  HttpStatus,
-  Param,
-  Patch,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Post, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequiresModule } from '../common/decorators/requires-module.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { SubscriptionGuard } from '../common/guards/subscription.guard';
 import { RequestUser } from '../common/interfaces/request-user.interface';
-import { CreateRepairJobDto, RecordImeiDto, UpdateRepairJobDto } from './dto/mobile.dto';
+import { RecordImeiDto } from './dto/mobile.dto';
 import { MobileService } from './mobile.service';
 
+// Repair-job endpoints moved to RepairsModule ('/repairs') — that feature
+// grew technician assignment, parts billing, and invoice checkout, which
+// didn't belong bolted onto a controller named for IMEI tracking.
 @Controller('mobile')
 @UseGuards(JwtAuthGuard, SubscriptionGuard)
 @RequiresModule('mobile')
@@ -33,25 +25,5 @@ export class MobileController {
   @Get('imei')
   lookupImei(@CurrentUser() u: RequestUser, @Query('imei') imei: string) {
     return this.svc.lookupImei(u.tenantId, imei);
-  }
-
-  @Get('repair-jobs')
-  listRepairJobs(@CurrentUser() u: RequestUser, @Query('status') status?: string) {
-    return this.svc.listRepairJobs(u.tenantId, status);
-  }
-
-  @Post('repair-jobs')
-  @HttpCode(HttpStatus.CREATED)
-  createRepairJob(@CurrentUser() u: RequestUser, @Body() dto: CreateRepairJobDto) {
-    return this.svc.createRepairJob(u.tenantId, dto);
-  }
-
-  @Patch('repair-jobs/:id')
-  updateRepairJob(
-    @CurrentUser() u: RequestUser,
-    @Param('id') id: string,
-    @Body() dto: UpdateRepairJobDto,
-  ) {
-    return this.svc.updateRepairJob(u.tenantId, id, dto);
   }
 }

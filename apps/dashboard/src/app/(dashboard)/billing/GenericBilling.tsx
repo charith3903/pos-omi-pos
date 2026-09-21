@@ -86,15 +86,30 @@ function calcTotals(lines: CartLine[], billDiscount: number) {
   return { itemsGross, subtotal, discount, tax, total };
 }
 
-const TILL_ID_KEY = 'omnipos_till_id';
-function getTillId(): string {
-  if (typeof window === 'undefined') return 'WEB';
-  let id = localStorage.getItem(TILL_ID_KEY);
-  if (!id) {
-    id = `WEB-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
-    localStorage.setItem(TILL_ID_KEY, id);
+const DEVICE_ID_KEY = 'omnipos_device_id';
+
+/**
+ * Resolves this browser's till to a real `Device` row (the same model the
+ * Flutter app registers against) instead of a purely cosmetic local label.
+ * That means sales made here now carry a real `deviceId`, so stock
+ * movements and shift/cash reports can actually attribute them to a till.
+ *
+ * Re-registers if the cached id is missing or no longer valid (e.g. it
+ * belonged to a different tenant's browser profile, or was deleted).
+ */
+async function ensureDevice(outletId?: string): Promise<{ id: string; name: string }> {
+  const cachedId = localStorage.getItem(DEVICE_ID_KEY);
+  if (cachedId) {
+    try {
+      const device = await api.getDevice(cachedId);
+      return device;
+    } catch {
+      // Fall through to register a new one.
+    }
   }
-  return id;
+  const device = await api.registerDevice({ outletId });
+  localStorage.setItem(DEVICE_ID_KEY, device.id);
+  return device;
 }
 
 // ─── Product search (barcode/name — feeds the item table, not a browse grid) ──
@@ -109,11 +124,15 @@ function ProductSearch({
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
+  // -1 = nothing highlighted yet (still typing); Up/Down move this before
+  // Enter picks it — the only way to add an item by name without a mouse.
+  const [highlightIdx, setHighlightIdx] = useState(-1);
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     clearTimeout(timer.current);
+    setHighlightIdx(-1);
     if (!query.trim()) { setResults([]); return; }
     timer.current = setTimeout(async () => {
       setLoading(true);
@@ -125,8 +144,38 @@ function ProductSearch({
     return () => clearTimeout(timer.current);
   }, [query, categoryId]);
 
+  function selectResult(p: Product) {
+    onAdd(p);
+    setQuery('');
+    setResults([]);
+    setHighlightIdx(-1);
+  }
+
   async function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'ArrowDown' && results.length > 0) {
+      e.preventDefault();
+      setHighlightIdx((i) => Math.min(i + 1, results.length - 1));
+      return;
+    }
+    if (e.key === 'ArrowUp' && results.length > 0) {
+      e.preventDefault();
+      setHighlightIdx((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'Escape') {
+      setResults([]);
+      setHighlightIdx(-1);
+      return;
+    }
     if (e.key !== 'Enter') return;
+
+    // A highlighted result (arrowed-to, or the sole match) wins over the
+    // barcode lookup — matches what the cashier sees on screen.
+    if (highlightIdx >= 0 && results[highlightIdx]) {
+      selectResult(results[highlightIdx]);
+      return;
+    }
+
     const val = query.trim();
     if (!val) return;
     try {
@@ -135,7 +184,9 @@ function ProductSearch({
       setQuery('');
       setResults([]);
     } catch {
-      // not a barcode — leave the typeahead results for the user to pick from
+      // Not a barcode. Exactly one name match — Enter selects it directly,
+      // same as pressing Down once then Enter.
+      if (results.length === 1) selectResult(results[0]);
     }
   }
 
@@ -155,11 +206,14 @@ function ProductSearch({
       {(loading || results.length > 0) && (
         <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 max-h-72 overflow-auto">
           {loading && <div className="px-4 py-3 text-sm text-gray-400">Searching…</div>}
-          {results.map((p) => (
+          {results.map((p, i) => (
             <button
               key={p.id}
-              onClick={() => { onAdd(p); setQuery(''); setResults([]); }}
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-primary-50 text-left border-b last:border-0"
+              onClick={() => selectResult(p)}
+              onMouseEnter={() => setHighlightIdx(i)}
+              className={`w-full flex items-center justify-between px-4 py-3 text-left border-b last:border-0 ${
+                i === highlightIdx ? 'bg-primary-50' : 'hover:bg-primary-50'
+              }`}
             >
               <div>
                 <div className="font-medium text-sm text-gray-900">{p.name}</div>
@@ -307,6 +361,7 @@ export default function GenericBilling() {
   // filled in after mount — see the effect below.
   const [clock, setClock] = useState<Date | null>(null);
   const [tillId, setTillId] = useState<string | null>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
 
   // Modal visibility
   const [modal, setModal] = useState<
@@ -329,13 +384,27 @@ export default function GenericBilling() {
     api.getOutlets().then((list) => {
       const def = list.find((o) => o.isDefault) ?? list[0];
       if (def) setOutletId(def.id);
+      ensureDevice(def?.id)
+        .then((device) => { setDeviceId(device.id); setTillId(device.name); })
+        .catch(() => {});
     }).catch(() => {});
     refreshShift();
-    setTillId(getTillId());
     setClock(new Date());
     const t = setInterval(() => setClock(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  async function renameTill() {
+    if (!deviceId) return;
+    const next = window.prompt('Rename this till', tillId ?? '');
+    if (!next || !next.trim()) return;
+    try {
+      const device = await api.renameDevice(deviceId, next.trim());
+      setTillId(device.name);
+    } catch (err: any) {
+      alert(err.message ?? 'Failed to rename till');
+    }
+  }
 
   function refreshShift() {
     api.getCurrentShift().then(setCurrentShift).catch(() => setCurrentShift(null));
@@ -358,12 +427,31 @@ export default function GenericBilling() {
       if (handler) {
         e.preventDefault();
         handler();
+        return;
+      }
+
+      // Digit-key payment shortcuts (1 Cash / 2 Card / 3 Transfer / 4 Cheque
+      // / 5 Credit) — a common till convention, but digits are also how a
+      // cashier types a SKU or price into a text field, so these only fire
+      // when no modal is open and focus isn't in any input/textarea. Adds
+      // the full remaining balance for that method, same as clicking "+".
+      const tag = (document.activeElement as HTMLElement | null)?.tagName;
+      const typingInField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if (!modal && !typingInField && lines.length > 0 && remaining > 0.005) {
+        const payMap: Record<string, PaymentMethod> = {
+          '1': 'CASH', '2': 'CARD', '3': 'TRANSFER', '4': 'CHEQUE', '5': 'CREDIT',
+        };
+        const method = payMap[e.key];
+        if (method) {
+          e.preventDefault();
+          addPayment(method);
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIdx, lines, posting, locked]);
+  }, [selectedIdx, lines, posting, locked, modal, remaining]);
 
   // ─── Cart manipulation ─────────────────────────────────────────────────
 
@@ -541,6 +629,7 @@ export default function GenericBilling() {
     const dto = {
       id: invoiceId,
       outletId,
+      deviceId: deviceId ?? undefined,
       customerId: customer?.id,
       salesmanId: salesman?.id,
       notes: billNote || undefined,
@@ -785,7 +874,9 @@ export default function GenericBilling() {
 
       {/* ── Status bar ── */}
       <div className="bg-black text-slate-300 text-[11px] px-3 py-1 flex items-center gap-4">
-        <span>Till ID: {tillId ?? '—'}</span>
+        <button onClick={renameTill} title="Click to rename this till" className="hover:underline">
+          Till: {tillId ?? '—'}
+        </button>
         <span>Invoice No: {lastInvoice?.number ?? '—'}</span>
         <span>User ID: {session?.user?.name}</span>
         <span>Salesman: {salesman?.name ?? '—'}</span>

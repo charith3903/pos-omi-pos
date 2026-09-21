@@ -157,9 +157,16 @@ export class InvoicesService {
       }
 
       // ── Bust Redis stock cache for affected products ───────────────────
-      const bust = dto.items.map((item) =>
-        this.redis.del(`stock:${tenantId}:${item.productId}`),
-      );
+      // Per-product keys AND the tenant-wide aggregate maps that
+      // getAllStock()/getAllStockByVariant() cache separately (StockService)
+      // — busting only the per-product key left the Stock page and low-stock
+      // sidebar badge serving a stale "all" snapshot for up to STOCK_TTL
+      // after every sale through this, the main checkout path.
+      const bust = [
+        ...dto.items.map((item) => this.redis.del(`stock:${tenantId}:${item.productId}`)),
+        this.redis.del(`stock:${tenantId}:all`),
+        this.redis.del(`stock:${tenantId}:allVariants`),
+      ];
       await Promise.allSettled(bust); // don't fail the tx if Redis is down
 
       return tx.invoice.findUnique({
